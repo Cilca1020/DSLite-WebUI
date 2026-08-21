@@ -140,8 +140,17 @@ async function refreshSessions() {
       e.stopPropagation();
       if (!confirm("确定删除会话「" + s.title + "」？")) return;
       await apiDelete("/api/sessions/" + s.id);
-      if (currentSessionId === s.id) newSession();
-      refreshSessions();
+      if (currentSessionId === s.id) {
+        // 删的是当前会话：优先切到最新会话，无其他会话才新建
+        const list = await apiGet("/api/sessions");
+        if (list.length > 0) {
+          await openSession(list[0].id);
+        } else {
+          await newSession();
+        }
+      } else {
+        refreshSessions();
+      }
     };
     li.appendChild(title);
     li.appendChild(renameBtn);
@@ -227,6 +236,18 @@ async function openSession(id) {
       }
     });
   refreshSessions();
+  // 切换后清理其他空会话（保留当前正在查看的）
+  await cleanupEmptySessions(currentSessionId);
+}
+
+// 清理空会话（无消息），排除 excludeId 指向的当前会话
+async function cleanupEmptySessions(excludeId) {
+  try {
+    await apiPost("/api/sessions/cleanup", { exclude: excludeId });
+    refreshSessions();
+  } catch (_) {
+    /* 清理失败不影响主流程 */
+  }
 }
 
 // ------------------------- 发送消息 -------------------------
@@ -429,6 +450,8 @@ async function init() {
   refreshPresets();
   // 默认新建一个会话
   if (!currentSessionId) await newSession();
+  // 启动时清理其他空会话（保留当前会话）
+  await cleanupEmptySessions(currentSessionId);
 }
 
 init();

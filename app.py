@@ -10,6 +10,7 @@
   GET  /api/sessions/<id>      -> 单个会话内容
   DELETE /api/sessions/<id>    -> 删除会话
   POST /api/sessions/<id>/rename -> 重命名会话 ({"title": "..."})
+  POST /api/sessions/cleanup   -> 删除空会话 ({"exclude": 当前会话id})
   POST /api/sessions/<id>/msg  -> 向会话追加一条消息（非流式，存历史用）
   GET  /api/presets            -> 参数预设列表
   POST /api/presets            -> 保存预设
@@ -142,6 +143,14 @@ def api_rename_session(sid):
     if session is None:
         return jsonify({"error": "会话不存在"}), 404
     return jsonify(session)
+
+
+@app.route("/api/sessions/cleanup", methods=["POST"])
+def api_cleanup_sessions():
+    # 删除空会话，可排除当前正在查看的那个
+    exclude = (request.get_json(force=True, silent=True) or {}).get("exclude")
+    removed = storage.cleanup_empty_sessions(exclude_id=exclude)
+    return jsonify({"removed": removed})
 
 
 @app.route("/api/sessions/<sid>/msg", methods=["POST"])

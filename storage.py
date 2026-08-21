@@ -57,7 +57,7 @@ def get_session(sid):
 
 
 def list_sessions():
-    """列出所有会话元信息（不含完整消息），按创建时间倒序。"""
+    """列出所有会话元信息（不含完整消息），按最近互动时间倒序。"""
     _ensure_dirs()
     sessions = []
     for name in os.listdir(SESSIONS_DIR):
@@ -65,13 +65,17 @@ def list_sessions():
             continue
         with open(os.path.join(SESSIONS_DIR, name), "r", encoding="utf-8") as f:
             s = json.load(f)
+        created = s.get("created_at", 0)
+        # 最近互动时间：有更新则用 updated_at，否则用创建时间
+        updated = s.get("updated_at", created)
         sessions.append({
             "id": s["id"],
             "title": s.get("title", "未命名"),
-            "created_at": s.get("created_at", 0),
+            "created_at": created,
+            "updated_at": updated,
             "message_count": len(s.get("messages", [])),
         })
-    sessions.sort(key=lambda x: x["created_at"], reverse=True)
+    sessions.sort(key=lambda x: x["updated_at"], reverse=True)
     return sessions
 
 
@@ -92,11 +96,37 @@ def rename_session(sid, title):
     return session
 
 
+def cleanup_empty_sessions(exclude_id=None):
+    """删除所有空会话（无消息），可排除某个 id（如当前正在查看的）。
+
+    返回被删除的会话 id 列表。
+    """
+    _ensure_dirs()
+    removed = []
+    for name in os.listdir(SESSIONS_DIR):
+        if not name.endswith(".json"):
+            continue
+        sid = name[: -len(".json")]
+        if sid == exclude_id:
+            continue
+        path = os.path.join(SESSIONS_DIR, name)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                s = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+        if len(s.get("messages", [])) == 0:
+            os.remove(path)
+            removed.append(sid)
+    return removed
+
+
 def append_message(sid, role, content, reasoning=None):
     """向指定会话追加一条消息。
 
     reasoning: 仅用于渲染（如思考过程），不参与模型上下文；
                content 始终为纯回答文本，同时用于渲染与上传。
+    每次追加会刷新 updated_at（用于按最近互动排序）。
     """
     session = get_session(sid)
     if session is None:
@@ -109,6 +139,7 @@ def append_message(sid, role, content, reasoning=None):
     if reasoning is not None:
         msg["reasoning"] = reasoning
     session.setdefault("messages", []).append(msg)
+    session["updated_at"] = time.time()
     save_session(session)
     return session
 
