@@ -25,16 +25,35 @@ def _new_id():
 
 # ------------------------- 会话管理 -------------------------
 
-def create_session(title=None):
-    """新建一个空会话，返回会话元信息。"""
+def create_session(title=None, model=None, params=None):
+    """新建一个空会话，返回会话元信息。
+
+    model:  该会话使用的模型 id（每会话独立）
+    params: 该会话的推理参数（每会话独立）
+    """
     _ensure_dirs()
     sid = _new_id()
     session = {
         "id": sid,
         "title": title or "会话 " + time.strftime("%m-%d %H:%M"),
         "created_at": time.time(),
+        "model": model,
+        "params": params,
         "messages": [],  # 每条: {role, content, ts}
     }
+    save_session(session)
+    return session
+
+
+def update_session_config(sid, model=None, params=None):
+    """更新会话的模型与推理参数（每个会话一套独立配置）。"""
+    session = get_session(sid)
+    if session is None:
+        return None
+    if model is not None:
+        session["model"] = model
+    if params is not None:
+        session["params"] = params
     save_session(session)
     return session
 
@@ -71,6 +90,7 @@ def list_sessions():
         sessions.append({
             "id": s["id"],
             "title": s.get("title", "未命名"),
+            "model": s.get("model"),
             "created_at": created,
             "updated_at": updated,
             "message_count": len(s.get("messages", [])),

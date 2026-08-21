@@ -133,8 +133,24 @@ def api_list_sessions():
 
 @app.route("/api/sessions", methods=["POST"])
 def api_create_session():
-    title = (request.get_json(force=True, silent=True) or {}).get("title")
-    return jsonify(storage.create_session(title))
+    data = request.get_json(force=True, silent=True) or {}
+    title = data.get("title")
+    model = data.get("model")
+    params = data.get("params")
+    return jsonify(storage.create_session(title, model=model, params=params))
+
+
+@app.route("/api/sessions/<sid>/config", methods=["POST"])
+def api_update_session_config(sid):
+    data = request.get_json(force=True, silent=True) or {}
+    session = storage.update_session_config(
+        sid,
+        model=data.get("model"),
+        params=data.get("params"),
+    )
+    if session is None:
+        return jsonify({"error": "会话不存在"}), 404
+    return jsonify(session)
 
 
 @app.route("/api/sessions/<sid>")

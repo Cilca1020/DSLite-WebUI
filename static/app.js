@@ -3,8 +3,6 @@
 // ------------------------- 工具 -------------------------
 const $ = (sel) => document.querySelector(sel);
 const LS_KEY = "dsw_api_key";
-const LS_PARAMS = "dsw_params";
-const LS_MODEL = "dsw_model";
 
 // 内联 SVG 图标（用 currentColor 描边，自动跟随主题文字色）。
 // 内联可避免 Flask 对 .svg 的 MIME 类型不完整（image/svg 而非 image/svg+xml）
@@ -34,13 +32,28 @@ function saveApiKey(k) {
 }
 function loadApiKey() { return localStorage.getItem(LS_KEY) || ""; }
 
-function saveParamsUI() {
-  const p = readParamsFromUI();
-  localStorage.setItem(LS_PARAMS, JSON.stringify(p));
+// 把当前 UI 上的 model + 推理参数保存到当前会话（每个对话一套独立配置）
+async function saveSessionConfig() {
+  if (!currentSessionId) return;
+  const cfg = {
+    model: $("#modelSelect").value,
+    params: readParamsFromUI(),
+  };
+  try {
+    await apiPost("/api/sessions/" + currentSessionId + "/config", cfg);
+  } catch (_) {
+    /* 保存失败不影响对话 */
+  }
 }
-function loadParamsUI() {
-  const s = localStorage.getItem(LS_PARAMS);
-  return s ? JSON.parse(s) : null;
+
+// 把会话配置（model + params）应用到 UI
+function applyConfigToUI(model, params) {
+  if (model) $("#modelSelect").value = model;
+  if (params) {
+    writeParamsToUI(params);
+  } else {
+    writeParamsToUI(PARAM_DEFAULTS);
+  }
 }
 
 // ------------------------- 参数读写 -------------------------
@@ -206,43 +219,19 @@ async function refreshSessions() {
   });
 }
 
-async function refreshPresets() {
-  const list = await apiGet("/api/presets");
-  const ul = $("#presetList");
-  ul.innerHTML = "";
-  list.forEach((p) => {
-    const li = document.createElement("li");
-    const name = document.createElement("span");
-    name.textContent = p.name;
-    name.style.flex = "1";
-    name.onclick = () => applyPreset(p.params);
-    const del = document.createElement("button");
-    del.className = "item-btn danger";
-    del.title = "删除";
-    del.innerHTML = svgIcon("trash");
-    del.onclick = async (e) => {
-      e.stopPropagation();
-      if (!confirm("确定删除预设「" + p.name + "」？")) return;
-      await apiDelete("/api/presets/" + encodeURIComponent(p.name));
-      refreshPresets();
-    };
-    li.appendChild(name);
-    li.appendChild(del);
-    ul.appendChild(li);
-  });
-}
-
-function applyPreset(params) {
-  writeParamsToUI(params);
-  saveParamsUI();
-}
-
 // ------------------------- 会话操作 -------------------------
 async function newSession() {
-  const s = await apiPost("/api/sessions", {});
+  // 新会话使用默认参数，不继承当前 UI 的配置
+  const s = await apiPost("/api/sessions", {
+    model: $("#modelSelect").value,
+    params: PARAM_DEFAULTS,
+  });
   currentSessionId = s.id;
   conversation = [];
   $("#chatBox").innerHTML = "";
+  // 把 UI 重置为默认参数（避免停留在上一会话的配置）
+  applyConfigToUI($("#modelSelect").value, PARAM_DEFAULTS);
+  saveSessionConfig();
   refreshSessions();
 }
 
@@ -267,6 +256,8 @@ function renderAssistant(text, reasoning) {
 async function openSession(id) {
   const s = await apiGet("/api/sessions/" + id);
   currentSessionId = id;
+  // 载入该会话独立的 model + 推理参数
+  applyConfigToUI(s.model, s.params);
   // content 始终是纯回答，直接用于模型上下文；reasoning 仅渲染
   conversation = s.messages
     .filter((m) => m.role !== "system")
@@ -443,9 +434,9 @@ async function init() {
     o.textContent = m.label;
     sel.appendChild(o);
   });
-  const savedModel = localStorage.getItem(LS_MODEL);
-  if (savedModel) sel.value = savedModel;
-  sel.onchange = () => localStorage.setItem(LS_MODEL, sel.value);
+  // 默认选第一个模型；打开会话时会被会话自身的 model 覆盖
+  if (models.length) sel.value = models[0].id;
+  sel.onchange = () => saveSessionConfig();
 
   // 默认参数 / 范围 / 说明
   const def = await apiGet("/api/params/default");
@@ -465,15 +456,15 @@ async function init() {
     el.textContent = tip;
   });
 
-  const saved = loadParamsUI();
-  writeParamsToUI(saved || PARAM_DEFAULTS);
+  // 无会话时先用默认参数初始化 UI；打开会话后会按会话配置覆盖
+  writeParamsToUI(PARAM_DEFAULTS);
 
-  // 参数面板改动即存（失焦时回退到合法范围）
+  // 参数面板改动即存（失焦时回退到合法范围，并保存到当前会话）
   document.querySelectorAll(".param-field input[data-key], #system_prompt").forEach((el) => {
     el.addEventListener("change", () => {
       const p = readParamsFromUI();
       writeParamsToUI(p); // 把回退后的值写回输入框
-      saveParamsUI();
+      saveSessionConfig();
     });
   });
 
@@ -496,7 +487,7 @@ async function init() {
     $("#settingsPanel").classList.add("hidden");
     $("#settingsOverlay").classList.add("hidden");
     $("#settingsPanel").setAttribute("aria-hidden", "true");
-    saveParamsUI();
+    saveSessionConfig();
   };
   $("#openSettingsBtn").onclick = openSettings;
   $("#closeSettingsBtn").onclick = closeSettings;
@@ -524,16 +515,9 @@ async function init() {
     }
   });
   $("#newSessionBtn").onclick = newSession;
-  $("#savePresetBtn").onclick = async () => {
-    const name = prompt("预设名称：");
-    if (!name) return;
-    await apiPost("/api/presets", { name, params: readParamsFromUI() });
-    refreshPresets();
-  };
 
   // 刷新侧栏
   refreshSessions();
-  refreshPresets();
   // 默认新建一个会话
   if (!currentSessionId) await newSession();
   // 启动时清理其他空会话（保留当前会话）
