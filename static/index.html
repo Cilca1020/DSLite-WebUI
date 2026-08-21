@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DeepSeek WebUI</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="app">
+    <!-- 侧边栏：会话 + 预设 -->
+    <aside class="sidebar">
+      <div class="sidebar-section">
+        <div class="sidebar-head">
+          <span>会话</span>
+          <button id="newSessionBtn" class="mini-btn">+ 新建</button>
+        </div>
+        <ul id="sessionList" class="session-list"></ul>
+      </div>
+      <div class="sidebar-section">
+        <div class="sidebar-head">
+          <span>参数预设</span>
+          <button id="savePresetBtn" class="mini-btn">保存当前</button>
+        </div>
+        <ul id="presetList" class="preset-list"></ul>
+      </div>
+    </aside>
+
+    <!-- 主区：对话 -->
+    <main class="main">
+      <header class="topbar">
+        <select id="modelSelect" class="model-select"></select>
+        <input id="apiKeyInput" class="apikey-input" type="password"
+               placeholder="在此输入 API Key（存于本浏览器）" />
+        <button id="clearKeyBtn" class="mini-btn" title="清除本地保存的 Key">清除Key</button>
+        <button id="toggleParamsBtn" class="mini-btn">参数 ▾</button>
+      </header>
+
+      <!-- 参数面板（默认收起） -->
+      <section id="paramsPanel" class="params-panel hidden">
+        <label>Temperature
+          <input id="temperature" type="number" step="0.1" min="0" max="2" />
+        </label>
+        <label>Top P
+          <input id="top_p" type="number" step="0.05" min="0" max="1" />
+        </label>
+        <label>Max Tokens
+          <input id="max_tokens" type="number" step="1" min="1" max="8192" />
+        </label>
+        <label class="full">System Prompt
+          <textarea id="system_prompt" rows="2"></textarea>
+        </label>
+      </section>
+
+      <div id="chatBox" class="chat-box"></div>
+
+      <footer class="input-bar">
+        <textarea id="userInput" class="user-input" rows="2"
+                  placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
+        <button id="sendBtn" class="send-btn">发送</button>
+      </footer>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
