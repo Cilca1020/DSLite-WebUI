@@ -87,6 +87,11 @@ def chat(
         except json.JSONDecodeError:
             continue
         delta = chunk.get("choices", [{}])[0].get("delta", {})
+        # 推理过程（DeepSeek Reasoner 等通过 reasoning_content 提供）
+        reasoning = delta.get("reasoning_content")
+        if reasoning:
+            yield "<<REASONING>>" + reasoning
+        # 正式回答内容
         piece = delta.get("content")
         if piece:
-            yield piece
+            yield "<<ANSWER>>" + piece

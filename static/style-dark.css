@@ -1,0 +1,55 @@
+/* 深色主题：仅覆盖 CSS 变量，结构与浅色表一致（见 style-light.css） */
+
+[data-theme="dark"] {
+  --bg-body: #15171c;
+  --text-main: #e6e8eb;
+  --bg-sidebar: #0f1115;
+  --text-sidebar: #e6e8eb;
+  --text-sidebar-dim: #8a9099;
+  --sidebar-hover: #23272f;
+  --sidebar-active: #2f3640;
+  --danger: #ff6b6b;
+  --danger-hover: #ff3b3b;
+
+  --bg-topbar: #1c1f26;
+  --border: #2c3038;
+  --bg-panel: #181b21;
+  --input-border: #353a44;
+  --btn-bg: #23272f;
+  --btn-hover: #2c313b;
+
+  --label-color: #b5bac2;
+  --field-bg: #2c313b;
+  --field-text: #e6e8eb;
+  --msg-user-bg: #4f7cff;
+  --msg-user-text: #fff;
+  --msg-assistant-bg: #23272f;
+  --msg-assistant-border: #353a44;
+  --reasoning-bg: #1b1e24;
+  --reasoning-border: #2c3038;
+  --reasoning-label: #9aa0a6;
+  --accent: #4f7cff;
+  --accent-hover: #3f6cf0;
+  --accent-disabled: #3a4a7a;
+}
+
+/* 深色滚动条：覆盖浏览器默认（默认在深色下仍偏浅） */
+[data-theme="dark"] *::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+[data-theme="dark"] *::-webkit-scrollbar-track {
+  background: #15171c;
+}
+[data-theme="dark"] *::-webkit-scrollbar-thumb {
+  background: #353a44;
+  border-radius: 5px;
+}
+[data-theme="dark"] *::-webkit-scrollbar-thumb:hover {
+  background: #454c58;
+}
+/* Firefox */
+[data-theme="dark"] * {
+  scrollbar-color: #353a44 #15171c;
+  scrollbar-width: thin;
+}

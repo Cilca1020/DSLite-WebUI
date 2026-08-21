@@ -82,16 +82,33 @@ def delete_session(sid):
         os.remove(path)
 
 
-def append_message(sid, role, content):
-    """向指定会话追加一条消息。"""
+def rename_session(sid, title):
+    """修改会话标题。"""
+    session = get_session(sid)
+    if session is None:
+        return None
+    session["title"] = title
+    save_session(session)
+    return session
+
+
+def append_message(sid, role, content, reasoning=None):
+    """向指定会话追加一条消息。
+
+    reasoning: 仅用于渲染（如思考过程），不参与模型上下文；
+               content 始终为纯回答文本，同时用于渲染与上传。
+    """
     session = get_session(sid)
     if session is None:
         session = create_session()
-    session.setdefault("messages", []).append({
+    msg = {
         "role": role,
         "content": content,
         "ts": time.time(),
-    })
+    }
+    if reasoning is not None:
+        msg["reasoning"] = reasoning
+    session.setdefault("messages", []).append(msg)
     save_session(session)
     return session
 

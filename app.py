@@ -9,6 +9,7 @@
   POST /api/sessions           -> 新建会话
   GET  /api/sessions/<id>      -> 单个会话内容
   DELETE /api/sessions/<id>    -> 删除会话
+  POST /api/sessions/<id>/rename -> 重命名会话 ({"title": "..."})
   POST /api/sessions/<id>/msg  -> 向会话追加一条消息（非流式，存历史用）
   GET  /api/presets            -> 参数预设列表
   POST /api/presets            -> 保存预设
@@ -131,14 +132,27 @@ def api_delete_session(sid):
     return jsonify({"ok": True})
 
 
+@app.route("/api/sessions/<sid>/rename", methods=["POST"])
+def api_rename_session(sid):
+    data = request.get_json(force=True, silent=True) or {}
+    title = data.get("title", "").strip()
+    if not title:
+        return jsonify({"error": "缺少 title"}), 400
+    session = storage.rename_session(sid, title)
+    if session is None:
+        return jsonify({"error": "会话不存在"}), 404
+    return jsonify(session)
+
+
 @app.route("/api/sessions/<sid>/msg", methods=["POST"])
 def api_append_msg(sid):
     data = request.get_json(force=True, silent=True) or {}
     role = data.get("role")
     content = data.get("content", "")
+    reasoning = data.get("reasoning")
     if role not in ("user", "assistant"):
         return jsonify({"error": "role 必须为 user 或 assistant"}), 400
-    session = storage.append_message(sid, role, content)
+    session = storage.append_message(sid, role, content, reasoning=reasoning)
     return jsonify(session)
 
 

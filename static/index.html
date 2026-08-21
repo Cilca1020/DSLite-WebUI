@@ -4,7 +4,15 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>DeepSeek WebUI</title>
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/style-light.css" />
+  <link rel="stylesheet" href="/static/style-dark.css" />
+  <!-- 防闪烁：在样式应用前先确定主题 -->
+  <script>
+    (function () {
+      var t = localStorage.getItem("dsw_theme") || "light";
+      document.documentElement.setAttribute("data-theme", t);
+    })();
+  </script>
 </head>
 <body>
   <div class="app">
@@ -13,14 +21,18 @@
       <div class="sidebar-section">
         <div class="sidebar-head">
           <span>会话</span>
-          <button id="newSessionBtn" class="mini-btn">+ 新建</button>
+          <button id="newSessionBtn" class="icon-btn" title="新建会话">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
         </div>
         <ul id="sessionList" class="session-list"></ul>
       </div>
       <div class="sidebar-section">
         <div class="sidebar-head">
           <span>参数预设</span>
-          <button id="savePresetBtn" class="mini-btn">保存当前</button>
+          <button id="savePresetBtn" class="icon-btn" title="保存当前参数为预设">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>
+          </button>
         </div>
         <ul id="presetList" class="preset-list"></ul>
       </div>
@@ -33,6 +45,9 @@
         <input id="apiKeyInput" class="apikey-input" type="password"
                placeholder="在此输入 API Key（存于本浏览器）" />
         <button id="clearKeyBtn" class="mini-btn" title="清除本地保存的 Key">清除Key</button>
+        <button id="themeBtn" class="icon-btn" title="切换深色/浅色">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"/></svg>
+        </button>
         <button id="toggleParamsBtn" class="mini-btn">参数 ▾</button>
       </header>
 

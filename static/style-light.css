@@ -1,0 +1,273 @@
+/* 浅色主题：所有颜色用 CSS 变量定义，深色主题只需覆盖这些变量 */
+
+:root,
+[data-theme="light"] {
+  --bg-body: #f5f6f8;
+  --text-main: #1f2329;
+  --bg-sidebar: #eceef1;
+  --text-sidebar: #1f2329;
+  --text-sidebar-dim: #6b7280;
+  --sidebar-hover: #e0e3e8;
+  --sidebar-active: #d4d8df;
+  --danger: #ff6b6b;
+  --danger-hover: #ff3b3b;
+
+  --bg-topbar: #fff;
+  --border: #e5e6eb;
+  --bg-panel: #fafafa;
+  --input-border: #d9d9d9;
+  --btn-bg: #fff;
+  --btn-hover: #f0f0f0;
+
+  --label-color: #555;
+  --field-bg: #fff;
+  --field-text: #1f2329;
+  --msg-user-bg: #4f7cff;
+  --msg-user-text: #fff;
+  --msg-assistant-bg: #fff;
+  --msg-assistant-border: #e5e6eb;
+  --reasoning-bg: #f3f4f6;
+  --reasoning-border: #e0e3e8;
+  --reasoning-label: #6b7280;
+  --accent: #4f7cff;
+  --accent-hover: #3f6cf0;
+  --accent-disabled: #a9c0ff;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  background: var(--bg-body);
+  color: var(--text-main);
+}
+
+.app {
+  display: flex;
+  height: 100vh;
+}
+
+/* 侧边栏 */
+.sidebar {
+  width: 240px;
+  background: var(--bg-sidebar);
+  color: var(--text-sidebar);
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  gap: 16px;
+  overflow-y: auto;
+}
+.sidebar-section { flex: 1; }
+.sidebar-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  color: var(--text-sidebar-dim);
+  margin-bottom: 8px;
+}
+.session-list, .preset-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.session-list li, .preset-list li {
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.session-list li:hover, .preset-list li:hover { background: var(--sidebar-hover); }
+.session-list li.active { background: var(--sidebar-active); }
+.item-del {
+  color: var(--danger);
+  font-size: 12px;
+  padding: 0 4px;
+}
+.item-del:hover { color: var(--danger-hover); }
+
+/* 图标按钮：内联 SVG，stroke 用 currentColor 跟随主题文字色 */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--input-border);
+  background: var(--btn-bg);
+  color: var(--field-text);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.icon-btn:hover { background: var(--btn-hover); }
+.icon-btn svg { width: 16px; height: 16px; }
+/* 列表项内的小图标按钮 */
+.item-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: var(--text-sidebar-dim);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.item-btn svg { width: 14px; height: 14px; }
+.item-btn:hover { background: rgba(128,128,128,0.18); }
+.item-btn.danger { color: var(--danger); }
+.item-btn.danger:hover { color: var(--danger-hover); }
+
+/* 主区 */
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.topbar {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--bg-topbar);
+  border-bottom: 1px solid var(--border);
+  align-items: center;
+}
+.model-select, .apikey-input {
+  padding: 7px 10px;
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--field-bg);
+  color: var(--field-text);
+}
+.apikey-input { flex: 1; }
+
+.mini-btn {
+  padding: 6px 10px;
+  border: 1px solid var(--input-border);
+  background: var(--btn-bg);
+  color: var(--field-text);
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.mini-btn:hover { background: var(--btn-hover); }
+
+/* 参数面板 */
+.params-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+.params-panel.hidden { display: none; }
+.params-panel label {
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  color: var(--label-color);
+  gap: 4px;
+}
+.params-panel label.full { flex: 1 1 100%; }
+.params-panel input, .params-panel textarea {
+  padding: 6px 8px;
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  background: var(--field-bg);
+  color: var(--field-text);
+}
+
+/* 对话区 */
+.chat-box {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.msg {
+  max-width: 75%;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.msg.user {
+  align-self: flex-end;
+  background: var(--msg-user-bg);
+  color: var(--msg-user-text);
+}
+.msg.assistant {
+  align-self: flex-start;
+  background: var(--msg-assistant-bg);
+  border: 1px solid var(--msg-assistant-border);
+}
+/* 推理过程（Reasoner 类模型） */
+.reasoning {
+  margin-bottom: 8px;
+  border: 1px solid var(--reasoning-border);
+  background: var(--reasoning-bg);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.reasoning summary {
+  cursor: pointer;
+  padding: 4px 10px;
+  color: var(--reasoning-label);
+  user-select: none;
+}
+.reasoning-body {
+  padding: 4px 10px 8px;
+  color: var(--reasoning-label);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+  border-top: 1px dashed var(--reasoning-border);
+}
+
+/* 输入栏 */
+.input-bar {
+  display: flex;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--bg-topbar);
+  border-top: 1px solid var(--border);
+}
+.user-input {
+  flex: 1;
+  resize: none;
+  padding: 10px;
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  background: var(--field-bg);
+  color: var(--field-text);
+}
+.send-btn {
+  padding: 0 22px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.send-btn:hover { background: var(--accent-hover); }
+.send-btn:disabled { background: var(--accent-disabled); cursor: not-allowed; }
