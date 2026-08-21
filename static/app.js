@@ -44,19 +44,55 @@ function loadParamsUI() {
 }
 
 // ------------------------- 参数读写 -------------------------
-function readParamsFromUI() {
-  return {
-    temperature: parseFloat($("#temperature").value),
-    top_p: parseFloat($("#top_p").value),
-    max_tokens: parseInt($("#max_tokens").value, 10),
-    system_prompt: $("#system_prompt").value,
-  };
+// 默认/范围/说明信息由后端 /api/params/default 提供，前端据此做范围回退
+let PARAM_DEFAULTS = {};
+let PARAM_RANGES = {};
+let PARAM_META = {};
+let STOP_MAX_ITEMS = 4;
+let STOP_MAX_LEN = 32;
+
+// 数值参数：超范围时回退到默认值；非数字也回退到默认
+function clampParam(key, raw) {
+  const def = PARAM_DEFAULTS[key];
+  if (key === "stop") return def; // stop 单独处理
+  const [lo, hi] = PARAM_RANGES[key] || [null, null];
+  let v = parseFloat(raw);
+  if (isNaN(v)) return def; // 非数字 -> 回退默认
+  if (lo !== null && v < lo) v = lo; // 低于下限 -> 钳到下限
+  if (hi !== null && v > hi) v = hi; // 高于上限 -> 钳到上限
+  return key === "max_tokens" ? Math.round(v) : v;
 }
+
+// 处理 stop：逗号分隔，限制数量与单项长度，超长回退为截断（不丢弃）
+function sanitizeStop(raw) {
+  const s = (raw || "").toString();
+  if (!s.trim()) return "";
+  const items = s.split(",").map((x) => x.trim()).filter(Boolean);
+  return items
+    .slice(0, STOP_MAX_ITEMS)
+    .map((x) => x.slice(0, STOP_MAX_LEN))
+    .join(",");
+}
+
+function readParamsFromUI() {
+  const p = { system_prompt: $("#system_prompt").value };
+  document.querySelectorAll(".param-field input[data-key]").forEach((el) => {
+    const key = el.dataset.key;
+    p[key] = key === "stop" ? sanitizeStop(el.value) : clampParam(key, el.value);
+  });
+  return p;
+}
+
 function writeParamsToUI(p) {
-  $("#temperature").value = p.temperature;
-  $("#top_p").value = p.top_p;
-  $("#max_tokens").value = p.max_tokens;
-  $("#system_prompt").value = p.system_prompt;
+  $("#system_prompt").value = p.system_prompt ?? PARAM_DEFAULTS.system_prompt ?? "";
+  document.querySelectorAll(".param-field input[data-key]").forEach((el) => {
+    const key = el.dataset.key;
+    if (key in p && p[key] !== undefined && p[key] !== null) {
+      el.value = p[key];
+    } else if (key in PARAM_DEFAULTS) {
+      el.value = PARAM_DEFAULTS[key];
+    }
+  });
 }
 
 // ------------------------- API 封装 -------------------------
@@ -269,7 +305,7 @@ async function sendMessage() {
 
   const apiKey = loadApiKey();
   if (!apiKey) {
-    alert("请先在右上角输入 API Key");
+    alert("请先点击右上角设置按钮，在设置面板中输入 API Key");
     return;
   }
   const model = $("#modelSelect").value;
@@ -411,14 +447,34 @@ async function init() {
   if (savedModel) sel.value = savedModel;
   sel.onchange = () => localStorage.setItem(LS_MODEL, sel.value);
 
-  // 默认参数
+  // 默认参数 / 范围 / 说明
   const def = await apiGet("/api/params/default");
-  const saved = loadParamsUI();
-  writeParamsToUI(saved || def);
+  PARAM_DEFAULTS = def.defaults || {};
+  PARAM_RANGES = def.ranges || {};
+  PARAM_META = def.meta || {};
+  STOP_MAX_ITEMS = def.stop_max_items || 4;
+  STOP_MAX_LEN = def.stop_max_len || 32;
 
-  // 参数面板改动即存
-  ["#temperature", "#top_p", "#max_tokens", "#system_prompt"].forEach((id) => {
-    $(id).addEventListener("change", saveParamsUI);
+  // 渲染每个参数的说明文字（含取值范围）
+  document.querySelectorAll(".param-hint[data-hint]").forEach((el) => {
+    const key = el.dataset.hint;
+    const meta = PARAM_META[key] || "";
+    const rng = PARAM_RANGES[key];
+    let tip = meta;
+    if (rng) tip += `（范围 ${rng[0]}~${rng[1]}）`;
+    el.textContent = tip;
+  });
+
+  const saved = loadParamsUI();
+  writeParamsToUI(saved || PARAM_DEFAULTS);
+
+  // 参数面板改动即存（失焦时回退到合法范围）
+  document.querySelectorAll(".param-field input[data-key], #system_prompt").forEach((el) => {
+    el.addEventListener("change", () => {
+      const p = readParamsFromUI();
+      writeParamsToUI(p); // 把回退后的值写回输入框
+      saveParamsUI();
+    });
   });
 
   // API Key
@@ -429,10 +485,22 @@ async function init() {
     $("#apiKeyInput").value = "";
   };
 
-  // 折叠参数
-  $("#toggleParamsBtn").onclick = () => {
-    $("#paramsPanel").classList.toggle("hidden");
+  // 设置面板（右侧抽屉）
+  const openSettings = () => {
+    $("#settingsPanel").classList.remove("hidden");
+    $("#settingsOverlay").classList.remove("hidden");
+    $("#settingsPanel").setAttribute("aria-hidden", "false");
   };
+  const closeSettings = () => {
+    writeParamsToUI(readParamsFromUI()); // 关闭前先把越界值回退
+    $("#settingsPanel").classList.add("hidden");
+    $("#settingsOverlay").classList.add("hidden");
+    $("#settingsPanel").setAttribute("aria-hidden", "true");
+    saveParamsUI();
+  };
+  $("#openSettingsBtn").onclick = openSettings;
+  $("#closeSettingsBtn").onclick = closeSettings;
+  $("#settingsOverlay").onclick = closeSettings;
 
   // 深色/浅色切换
   const themeBtn = $("#themeBtn");

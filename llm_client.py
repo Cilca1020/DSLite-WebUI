@@ -29,6 +29,9 @@ def chat(
     temperature=0.7,
     top_p=1.0,
     max_tokens=2048,
+    frequency_penalty=0.0,
+    presence_penalty=0.0,
+    stop=None,
     stream=False,
 ):
     """发起一次对话。
@@ -58,8 +61,12 @@ def chat(
         "temperature": temperature,
         "top_p": top_p,
         "max_tokens": max_tokens,
+        "frequency_penalty": frequency_penalty,
+        "presence_penalty": presence_penalty,
         "stream": stream,
     }
+    if stop:
+        payload["stop"] = stop
 
     if not stream:
         resp = requests.post(url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT)

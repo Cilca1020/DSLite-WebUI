@@ -44,15 +44,34 @@ DEFAULT_PARAMS = {
     "temperature": 0.7,
     "top_p": 1.0,
     "max_tokens": 2048,
+    "frequency_penalty": 0.0,
+    "presence_penalty": 0.0,
+    "stop": "",
     "system_prompt": "你是一个乐于助人的助手。",
 }
 
-# 参数的合法范围，用于后端校验
+# 数值型参数的合法范围，用于后端校验（前端也会据此外做回退）
 PARAM_RANGES = {
     "temperature": (0.0, 2.0),
     "top_p": (0.0, 1.0),
     "max_tokens": (1, 8192),
+    "frequency_penalty": (-2.0, 2.0),
+    "presence_penalty": (-2.0, 2.0),
 }
+
+# 每个参数的中文说明（前端展示用）
+PARAM_META = {
+    "temperature": "采样随机性。越高越发散有创意，越低越确定保守。",
+    "top_p": "核采样阈值。只从累计概率达此值的词集中采样。",
+    "max_tokens": "单次回复最大 token 数（含推理与回答）。",
+    "frequency_penalty": "按词频惩罚重复词，降低重复。",
+    "presence_penalty": "按是否出现过惩罚，鼓励引入新话题。",
+    "stop": "停止词，最多 4 个，用逗号分隔；命中即停止生成。",
+}
+
+# stop 序列限制（非数值型，单独约束）
+STOP_MAX_ITEMS = 4
+STOP_MAX_LEN = 32
 
 # 请求模型 API 的超时时间（秒）
 REQUEST_TIMEOUT = 60

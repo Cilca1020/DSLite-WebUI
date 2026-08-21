@@ -48,7 +48,13 @@ def api_models():
 
 @app.route("/api/params/default")
 def api_default_params():
-    return jsonify(config.DEFAULT_PARAMS)
+    return jsonify({
+        "defaults": config.DEFAULT_PARAMS,
+        "ranges": {k: list(v) for k, v in config.PARAM_RANGES.items()},
+        "meta": config.PARAM_META,
+        "stop_max_items": config.STOP_MAX_ITEMS,
+        "stop_max_len": config.STOP_MAX_LEN,
+    })
 
 
 # ------------------------- 对话 -------------------------
@@ -64,6 +70,15 @@ def _validate_params(data):
             val = config.DEFAULT_PARAMS.get(key)
         out[key] = max(lo, min(hi, val))
     out["system_prompt"] = data.get("system_prompt", config.DEFAULT_PARAMS["system_prompt"])
+
+    # stop 序列：逗号分隔，限制数量与单项长度
+    raw_stop = data.get("stop", config.DEFAULT_PARAMS["stop"])
+    if isinstance(raw_stop, str) and raw_stop.strip():
+        items = [s.strip() for s in raw_stop.split(",") if s.strip()]
+        items = [s[: config.STOP_MAX_LEN] for s in items[: config.STOP_MAX_ITEMS]]
+        out["stop"] = items
+    else:
+        out["stop"] = []
     return out
 
 
@@ -97,6 +112,9 @@ def api_chat():
                 temperature=params["temperature"],
                 top_p=params["top_p"],
                 max_tokens=params["max_tokens"],
+                frequency_penalty=params["frequency_penalty"],
+                presence_penalty=params["presence_penalty"],
+                stop=params["stop"],
                 stream=True,
             ):
                 yield piece

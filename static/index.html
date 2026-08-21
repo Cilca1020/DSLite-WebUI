@@ -42,30 +42,15 @@
     <main class="main">
       <header class="topbar">
         <select id="modelSelect" class="model-select"></select>
-        <input id="apiKeyInput" class="apikey-input" type="password"
-               placeholder="在此输入 API Key（存于本浏览器）" />
-        <button id="clearKeyBtn" class="mini-btn" title="清除本地保存的 Key">清除Key</button>
-        <button id="themeBtn" class="icon-btn" title="切换深色/浅色">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"/></svg>
-        </button>
-        <button id="toggleParamsBtn" class="mini-btn">参数 ▾</button>
+        <div class="topbar-right">
+          <button id="themeBtn" class="icon-btn" title="切换深色/浅色">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"/></svg>
+          </button>
+          <button id="openSettingsBtn" class="icon-btn" title="参数设置">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
+          </button>
+        </div>
       </header>
-
-      <!-- 参数面板（默认收起） -->
-      <section id="paramsPanel" class="params-panel hidden">
-        <label>Temperature
-          <input id="temperature" type="number" step="0.1" min="0" max="2" />
-        </label>
-        <label>Top P
-          <input id="top_p" type="number" step="0.05" min="0" max="1" />
-        </label>
-        <label>Max Tokens
-          <input id="max_tokens" type="number" step="1" min="1" max="8192" />
-        </label>
-        <label class="full">System Prompt
-          <textarea id="system_prompt" rows="2"></textarea>
-        </label>
-      </section>
 
       <div id="chatBox" class="chat-box"></div>
 
@@ -76,6 +61,67 @@
       </footer>
     </main>
   </div>
+
+  <!-- 设置面板（右侧抽屉 + 遮罩，默认关闭） -->
+  <div id="settingsOverlay" class="settings-overlay hidden"></div>
+  <aside id="settingsPanel" class="settings-panel hidden" aria-hidden="true">
+    <div class="settings-head">
+      <span>参数设置</span>
+      <button id="closeSettingsBtn" class="icon-btn" title="关闭">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+
+    <div class="settings-body">
+      <section class="settings-group">
+        <h3>API Key</h3>
+        <label class="block">API Key（仅存于本浏览器）
+          <input id="apiKeyInput" class="apikey-input" type="password"
+                 placeholder="sk-...（控制台获取）" />
+        </label>
+        <button id="clearKeyBtn" class="mini-btn">清除本地保存的 Key</button>
+      </section>
+
+      <section class="settings-group">
+        <h3>System Prompt</h3>
+        <textarea id="system_prompt" rows="4"></textarea>
+      </section>
+
+      <section class="settings-group">
+        <h3>推理参数</h3>
+        <div class="param-field">
+          <label for="temperature">Temperature</label>
+          <input id="temperature" data-key="temperature" type="number" step="0.1" min="0" max="2" />
+          <span class="param-hint" data-hint="temperature"></span>
+        </div>
+        <div class="param-field">
+          <label for="top_p">Top P</label>
+          <input id="top_p" data-key="top_p" type="number" step="0.05" min="0" max="1" />
+          <span class="param-hint" data-hint="top_p"></span>
+        </div>
+        <div class="param-field">
+          <label for="max_tokens">Max Tokens</label>
+          <input id="max_tokens" data-key="max_tokens" type="number" step="1" min="1" max="8192" />
+          <span class="param-hint" data-hint="max_tokens"></span>
+        </div>
+        <div class="param-field">
+          <label for="frequency_penalty">Frequency Penalty</label>
+          <input id="frequency_penalty" data-key="frequency_penalty" type="number" step="0.1" min="-2" max="2" />
+          <span class="param-hint" data-hint="frequency_penalty"></span>
+        </div>
+        <div class="param-field">
+          <label for="presence_penalty">Presence Penalty</label>
+          <input id="presence_penalty" data-key="presence_penalty" type="number" step="0.1" min="-2" max="2" />
+          <span class="param-hint" data-hint="presence_penalty"></span>
+        </div>
+        <div class="param-field">
+          <label for="stop">Stop 序列</label>
+          <input id="stop" data-key="stop" type="text" placeholder="如：\n, ###, 结束" />
+          <span class="param-hint" data-hint="stop"></span>
+        </div>
+      </section>
+    </div>
+  </aside>
 
   <script src="/static/vendor/marked.min.js"></script>
   <script src="/static/app.js"></script>
