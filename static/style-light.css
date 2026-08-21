@@ -32,6 +32,15 @@
   --accent: #4f7cff;
   --accent-hover: #3f6cf0;
   --accent-disabled: #a9c0ff;
+
+  /* Markdown 代码块/表格等 */
+  --code-bg: #f3f4f6;
+  --code-border: #e0e3e8;
+  --code-inline-bg: #eef0f3;
+  --text-dim: #6b7280;
+
+  /* 分隔线颜色（思考块与正文之间），比边框更明显 */
+  --hr-color: #c5c9d0;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -192,51 +201,125 @@ body {
 /* 对话区 */
 .chat-box {
   flex: 1;
+  min-width: 0; /* 防 flex 链水平溢出导致整页横向滚动 */
   overflow-y: auto;
-  padding: 18px;
+  padding: 18px 24px;
   display: flex;
   flex-direction: column;
   gap: 14px;
 }
 .msg {
   max-width: 75%;
-  padding: 10px 14px;
+  min-width: 0; /* 关键：允许 flex item 收缩，长代码/URL 不再撑破气泡 */
+  padding: 14px 20px;
   border-radius: 10px;
   font-size: 14px;
-  line-height: 1.6;
-  white-space: pre-wrap;
+  line-height: 1.75;
+  white-space: normal; /* markdown 自行处理空白，避免末尾换行节点撑出空行 */
   word-break: break-word;
 }
 .msg.user {
   align-self: flex-end;
   background: var(--msg-user-bg);
   color: var(--msg-user-text);
+  /* 用户消息按内容收缩（短消息气泡窄），长内容最多 75% */
+  width: fit-content;
 }
 .msg.assistant {
   align-self: flex-start;
   background: var(--msg-assistant-bg);
   border: 1px solid var(--msg-assistant-border);
+  /* 助手消息固定 75% 宽，所有助手气泡左边缘对齐统一 */
+  width: 75%;
 }
+/* Markdown 渲染进 .msg 本身：取消 pre-wrap，让块级标签正常排版 */
+.msg > :first-child { margin-top: 0; }
+.msg > :last-child { margin-bottom: 0; }
+/* 块级元素统一紧凑间距，避免默认 1em 造成单行气泡下方多出空白 */
+.msg p, .msg ul, .msg ol, .msg blockquote, .msg pre, .msg table, .msg h1,
+.msg h2, .msg h3, .msg h4, .msg h5, .msg h6 {
+  margin: 0.4em 0;
+}
+.msg p:first-child, .msg ul:first-child, .msg ol:first-child,
+.msg blockquote:first-child, .msg pre:first-child, .msg table:first-child,
+.msg h1:first-child, .msg h2:first-child, .msg h3:first-child,
+.msg h4:first-child, .msg h5:first-child, .msg h6:first-child { margin-top: 0; }
+.msg p:last-child, .msg ul:last-child, .msg ol:last-child,
+.msg blockquote:last-child, .msg pre:last-child, .msg table:last-child,
+.msg h1:last-child, .msg h2:last-child, .msg h3:last-child,
+.msg h4:last-child, .msg h5:last-child, .msg h6:last-child { margin-bottom: 0; }
+/* 列表：内缩进，圆点不贴气泡边 */
+.msg ul, .msg ol { padding-left: 1.5em; }
+/* 代码块 */
+.msg pre, .reasoning-body pre {
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  max-width: 100%;
+  white-space: pre;
+}
+.msg code, .reasoning-body code {
+  background: var(--code-inline-bg);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em;
+}
+.msg pre code, .reasoning-body pre code {
+  background: none;
+  padding: 0;
+}
+.msg table, .reasoning-body table {
+  border-collapse: collapse;
+  width: 100%;
+  display: block;
+  overflow-x: auto;
+}
+.msg th, .msg td,
+.reasoning-body th, .reasoning-body td {
+  border: 1px solid var(--code-border);
+  padding: 4px 8px;
+  text-align: left;
+}
+.msg a, .reasoning-body a { color: var(--accent); }
+.msg blockquote, .reasoning-body blockquote {
+  margin: 0.5em 0;
+  padding-left: 10px;
+  border-left: 3px solid var(--code-border);
+  color: var(--text-dim);
+}
+.msg img, .reasoning-body img { max-width: 100%; }
+/* 分隔线（思考块与正文之间）：上下留白，避免贴太近 */
+.msg hr {
+  border: none;
+  border-top: 1px solid var(--hr-color);
+  margin: 12px 0;
+}
+/* 思考块内部 markdown 同样清首尾 margin，避免多出空白 */
+.reasoning-body > :first-child { margin-top: 0; }
+.reasoning-body > :last-child { margin-bottom: 0; }
 /* 推理过程（Reasoner 类模型） */
 .reasoning {
   margin-bottom: 8px;
   border: 1px solid var(--reasoning-border);
   background: var(--reasoning-bg);
   border-radius: 8px;
-  overflow: hidden;
+  min-width: 0;
 }
 .reasoning summary {
   cursor: pointer;
-  padding: 4px 10px;
+  padding: 8px 12px;
   color: var(--reasoning-label);
   user-select: none;
 }
 .reasoning-body {
-  padding: 4px 10px 8px;
+  padding: 6px 12px 10px;
   color: var(--reasoning-label);
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 240px;
+  max-height: 320px;
   overflow-y: auto;
   border-top: 1px dashed var(--reasoning-border);
 }

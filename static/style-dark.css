@@ -31,6 +31,15 @@
   --accent: #4f7cff;
   --accent-hover: #3f6cf0;
   --accent-disabled: #3a4a7a;
+
+  /* Markdown 代码块/表格等 */
+  --code-bg: #16191f;
+  --code-border: #353a44;
+  --code-inline-bg: #2c313b;
+  --text-dim: #9aa0a6;
+
+  /* 分隔线颜色（思考块与正文之间），比边框更明显 */
+  --hr-color: #4a505c;
 }
 
 /* 深色滚动条：覆盖浏览器默认（默认在深色下仍偏浅） */

@@ -98,11 +98,22 @@ async function streamChat(payload, onChunk) {
 }
 
 // ------------------------- 渲染 -------------------------
-function addMsgEl(role, text) {
+// 将文本以 Markdown 渲染进元素（思考与正文通用）
+function renderMarkdown(el, text) {
+  const src = (text || "").trim();
+  el.innerHTML = (window.marked ? marked.parse(src) : src);
+  if (!src) el.textContent = "";
+}
+
+function addMsgEl(role, text, markdown = true) {
   const box = $("#chatBox");
   const div = document.createElement("div");
   div.className = "msg " + role;
-  div.textContent = text;
+  if (markdown && window.marked) {
+    renderMarkdown(div, text);
+  } else {
+    div.textContent = text || "";
+  }
   box.appendChild(div);
   box.scrollTop = box.scrollHeight;
   return div;
@@ -201,7 +212,7 @@ async function newSession() {
 
 // 渲染一条助手消息（支持思考折叠块），返回元素
 function renderAssistant(text, reasoning) {
-  const el = addMsgEl("assistant", text);
+  const el = addMsgEl("assistant", text); // 正文已按 markdown 渲染
   if (reasoning) {
     const wrap = document.createElement("details");
     wrap.className = "reasoning";
@@ -209,7 +220,7 @@ function renderAssistant(text, reasoning) {
     summary.textContent = "思考过程";
     const body = document.createElement("div");
     body.className = "reasoning-body";
-    body.textContent = reasoning;
+    renderMarkdown(body, reasoning); // 思考过程也渲染 markdown
     wrap.appendChild(summary);
     wrap.appendChild(body);
     el.insertBefore(wrap, el.firstChild);
@@ -330,15 +341,19 @@ async function sendMessage() {
       // 递归处理剩余 buffer（可能还含下一个标记）
       flush();
     };
+    // 正文容器：markdown 渲染只作用于此，不影响思考折叠块
+    const answerDiv = document.createElement("div");
+    answerDiv.className = "msg-content";
+    assistantEl.appendChild(answerDiv);
     const applyChunk = (text) => {
       if (!text) return;
       if (mode === "reasoning") {
         reasoning += text;
         ensureReasoning();
-        reasoningBody.textContent = reasoning;
+        reasoningBody.textContent = reasoning; // 流式实时显示纯文本
       } else {
         if (reasoning && reasoningWrap && reasoningWrap.open) reasoningWrap.open = false;
-        assistantEl.appendChild(document.createTextNode(text));
+        answerDiv.appendChild(document.createTextNode(text)); // 流式实时显示纯文本
         full += text;
       }
       $("#chatBox").scrollTop = $("#chatBox").scrollHeight;
@@ -360,6 +375,9 @@ async function sendMessage() {
       applyChunk(buffer);
       buffer = "";
     }
+    // 流式结束后再做一次 Markdown 渲染（思考与正文都生效）
+    if (reasoning && reasoningBody) renderMarkdown(reasoningBody, reasoning);
+    renderMarkdown(answerDiv, full);
     // 存历史：content 存纯回答（用于渲染+上传），reasoning 单独存（仅渲染）
     if (currentSessionId) {
       await apiPost("/api/sessions/" + currentSessionId + "/msg", { role: "user", content: text });
