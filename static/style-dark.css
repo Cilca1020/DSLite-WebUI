@@ -43,22 +43,37 @@
 }
 
 /* 深色滚动条：覆盖浏览器默认（默认在深色下仍偏浅） */
-[data-theme="dark"] *::-webkit-scrollbar {
+[data-theme="dark"] .sidebar,
+[data-theme="dark"] .chat-box,
+[data-theme="dark"] .settings-body,
+[data-theme="dark"] .settings-panel {
+  scrollbar-gutter: stable;
+  scrollbar-color: #353a44 #15171c;
+  scrollbar-width: thin;
+}
+[data-theme="dark"] .sidebar::-webkit-scrollbar,
+[data-theme="dark"] .chat-box::-webkit-scrollbar,
+[data-theme="dark"] .settings-body::-webkit-scrollbar,
+[data-theme="dark"] .settings-panel::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
-[data-theme="dark"] *::-webkit-scrollbar-track {
+[data-theme="dark"] .sidebar::-webkit-scrollbar-track,
+[data-theme="dark"] .chat-box::-webkit-scrollbar-track,
+[data-theme="dark"] .settings-body::-webkit-scrollbar-track,
+[data-theme="dark"] .settings-panel::-webkit-scrollbar-track {
   background: #15171c;
 }
-[data-theme="dark"] *::-webkit-scrollbar-thumb {
+[data-theme="dark"] .sidebar::-webkit-scrollbar-thumb,
+[data-theme="dark"] .chat-box::-webkit-scrollbar-thumb,
+[data-theme="dark"] .settings-body::-webkit-scrollbar-thumb,
+[data-theme="dark"] .settings-panel::-webkit-scrollbar-thumb {
   background: #353a44;
   border-radius: 5px;
 }
-[data-theme="dark"] *::-webkit-scrollbar-thumb:hover {
+[data-theme="dark"] .sidebar::-webkit-scrollbar-thumb:hover,
+[data-theme="dark"] .chat-box::-webkit-scrollbar-thumb:hover,
+[data-theme="dark"] .settings-body::-webkit-scrollbar-thumb:hover,
+[data-theme="dark"] .settings-panel::-webkit-scrollbar-thumb:hover {
   background: #454c58;
-}
-/* Firefox */
-[data-theme="dark"] * {
-  scrollbar-color: #353a44 #15171c;
-  scrollbar-width: thin;
 }

@@ -83,16 +83,25 @@ body {
   gap: 4px;
 }
 .session-list li, .preset-list li {
-  padding: 8px 10px;
-  border-radius: 6px;
+  padding: 12px 12px;
+  border-radius: 8px;
   font-size: 13px;
+  min-height: 44px;
   cursor: pointer;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 6px;
 }
 .session-list li:hover, .preset-list li:hover { background: var(--sidebar-hover); }
 .session-list li.active { background: var(--sidebar-active); }
+.session-list li span, .preset-list li span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .item-del {
   color: var(--danger);
   font-size: 12px;
@@ -292,6 +301,42 @@ body {
   white-space: normal; /* markdown 自行处理空白，避免末尾换行节点撑出空行 */
   word-break: break-word;
 }
+
+/* 每行消息容器：气泡 + 气泡外的操作条（grid 让操作条列宽跟随气泡） */
+.msg-row {
+  display: grid;
+  grid-template-columns: 1fr;
+  justify-items: var(--msg-row-align, flex-start);
+}
+.msg-row.user {
+  --msg-row-align: end;
+}
+
+/* 消息操作条：常驻显示在气泡外右下方，不依赖悬停（兼容移动端）。
+   grid 同列自动同宽，内部按钮靠右 */
+.msg-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  justify-content: flex-end;
+}
+.msg-action {
+  width: 34px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text-dim);
+  border-radius: 8px;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.msg-action:hover { background: var(--hover); color: var(--text); border-color: var(--accent); }
+.msg-action svg { width: 19px; height: 19px; display: block; }
+.msg-action svg { width: 15px; height: 15px; display: block; }
 .msg.user {
   align-self: flex-end;
   background: var(--msg-user-bg);
@@ -428,3 +473,38 @@ body {
 }
 .send-btn:hover { background: var(--accent-hover); }
 .send-btn:disabled { background: var(--accent-disabled); cursor: not-allowed; }
+
+/* 滚动容器统一：预留滚动条空间，避免内容被挤压导致右侧元素偏移 */
+.sidebar,
+.chat-box,
+.settings-body,
+.settings-panel {
+  scrollbar-gutter: stable;
+}
+/* 浅色主题滚动条（宽度与深色一致，均为 10px，不随主题变化） */
+.sidebar::-webkit-scrollbar,
+.chat-box::-webkit-scrollbar,
+.settings-body::-webkit-scrollbar,
+.settings-panel::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.sidebar::-webkit-scrollbar-track,
+.chat-box::-webkit-scrollbar-track,
+.settings-body::-webkit-scrollbar-track,
+.settings-panel::-webkit-scrollbar-track {
+  background: #eceef1;
+}
+.sidebar::-webkit-scrollbar-thumb,
+.chat-box::-webkit-scrollbar-thumb,
+.settings-body::-webkit-scrollbar-thumb,
+.settings-panel::-webkit-scrollbar-thumb {
+  background: #c5c9d0;
+  border-radius: 5px;
+}
+.sidebar::-webkit-scrollbar-thumb:hover,
+.chat-box::-webkit-scrollbar-thumb:hover,
+.settings-body::-webkit-scrollbar-thumb:hover,
+.settings-panel::-webkit-scrollbar-thumb:hover {
+  background: #aab0b8;
+}

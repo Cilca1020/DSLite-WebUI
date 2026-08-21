@@ -141,6 +141,27 @@ def cleanup_empty_sessions(exclude_id=None):
     return removed
 
 
+def delete_message(sid, index):
+    """删除会话中第 index 条消息（不含 system）。
+
+    index 针对 messages 数组中 role 不为 system 的顺序下标。
+    返回更新后的会话对象；下标越界或会话不存在返回 None。
+    """
+    session = get_session(sid)
+    if session is None:
+        return None
+    msgs = session.get("messages", [])
+    # 计算 user/assistant 消息在数组中的真实位置
+    chat_indices = [i for i, m in enumerate(msgs) if m.get("role") != "system"]
+    if index < 0 or index >= len(chat_indices):
+        return None
+    real_idx = chat_indices[index]
+    del msgs[real_idx]
+    session["updated_at"] = time.time()
+    save_session(session)
+    return session
+
+
 def append_message(sid, role, content, reasoning=None):
     """向指定会话追加一条消息。
 

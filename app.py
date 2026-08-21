@@ -12,6 +12,7 @@
   POST /api/sessions/<id>/rename -> 重命名会话 ({"title": "..."})
   POST /api/sessions/cleanup   -> 删除空会话 ({"exclude": 当前会话id})
   POST /api/sessions/<id>/msg  -> 向会话追加一条消息（非流式，存历史用）
+  DELETE /api/sessions/<id>/msg/<index> -> 删除会话中第 index 条消息（不含 system）
   GET  /api/presets            -> 参数预设列表
   POST /api/presets            -> 保存预设
   DELETE /api/presets/<name>   -> 删除预设
@@ -185,6 +186,15 @@ def api_cleanup_sessions():
     exclude = (request.get_json(force=True, silent=True) or {}).get("exclude")
     removed = storage.cleanup_empty_sessions(exclude_id=exclude)
     return jsonify({"removed": removed})
+
+
+@app.route("/api/sessions/<sid>/msg/<int:index>", methods=["DELETE"])
+def api_delete_msg(sid, index):
+    """删除会话中指定下标的消息（从 0 开始，仅统计 user/assistant 消息，不含 system）。"""
+    session = storage.delete_message(sid, index)
+    if session is None:
+        return jsonify({"error": "会话不存在或下标越界"}), 404
+    return jsonify(session)
 
 
 @app.route("/api/sessions/<sid>/msg", methods=["POST"])

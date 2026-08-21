@@ -13,6 +13,10 @@ const ICONS = {
   theme: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"/></svg>',
   edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>',
+  retry: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>',
+  copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+  check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>',
+  edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
 };
 
 // 生成图标按钮内部的 svg 元素（统一尺寸类）
@@ -20,10 +24,29 @@ function svgIcon(name) {
   return ICONS[name] || "";
 }
 
+// 复制文本的降级方案（clipboard API 不可用时的 textarea + execCommand）
+function fallbackCopy(text, onDone) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  try {
+    document.execCommand("copy");
+    if (onDone) onDone();
+  } catch (_) {
+    /* 复制失败静默处理 */
+  }
+  document.body.removeChild(ta);
+}
+
 // 当前会话状态（前端内存态，持久化交给后端 storage）
 let currentSessionId = null;
 // 当前对话上下文：[{role, content}]，不含 system（system 由参数面板提供）
 let conversation = [];
+// 当前会话最新一轮 user 消息的下标（仅这一轮显示「编辑」按钮）；null 表示无
+let lastUserMsgIndex = null;
 
 // ------------------------- 状态持久化 -------------------------
 function saveApiKey(k) {
@@ -154,8 +177,11 @@ function renderMarkdown(el, text) {
   if (!src) el.textContent = "";
 }
 
-function addMsgEl(role, text, markdown = true) {
+function addMsgEl(role, text, markdown = true, msgIndex = null) {
   const box = $("#chatBox");
+  // 每行容器：包裹气泡 + 气泡外的操作条
+  const row = document.createElement("div");
+  row.className = "msg-row " + role;
   const div = document.createElement("div");
   div.className = "msg " + role;
   if (markdown && window.marked) {
@@ -163,9 +189,72 @@ function addMsgEl(role, text, markdown = true) {
   } else {
     div.textContent = text || "";
   }
-  box.appendChild(div);
+  // 消息工具条：常驻显示在气泡外右下方（不依赖 hover，便于移动端）
+  let bar = null;
+  if (msgIndex !== null && currentSessionId) {
+    bar = document.createElement("div");
+    bar.className = "msg-actions";
+    // 复制按钮：复制气泡纯文本（排除思考过程折叠块）
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "msg-action";
+    copyBtn.title = "复制这条消息";
+    copyBtn.innerHTML = svgIcon("copy");
+    copyBtn.onclick = (e) => {
+      e.stopPropagation();
+      const clone = div.cloneNode(true);
+      const r = clone.querySelector(".reasoning");
+      if (r) r.remove();
+      const txt = clone.innerText.trim();
+      const done = () => {
+        copyBtn.innerHTML = svgIcon("check");
+        setTimeout(() => (copyBtn.innerHTML = svgIcon("copy")), 1200);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(txt).then(done).catch(() => fallbackCopy(txt, done));
+      } else {
+        fallbackCopy(txt, done);
+      }
+    };
+    bar.appendChild(copyBtn);
+    // 编辑按钮：仅最新一轮的 user 消息显示
+    if (role === "user" && msgIndex === lastUserMsgIndex) {
+      const editBtn = document.createElement("button");
+      editBtn.className = "msg-action";
+      editBtn.title = "编辑这条提问";
+      editBtn.innerHTML = svgIcon("edit");
+      editBtn.onclick = (e) => {
+        e.stopPropagation();
+        editMessage(msgIndex);
+      };
+      bar.appendChild(editBtn);
+    }
+    const delBtn = document.createElement("button");
+    delBtn.className = "msg-action";
+    delBtn.title = "删除这条消息（连同同轮另一条）";
+    delBtn.innerHTML = svgIcon("trash");
+    delBtn.onclick = (e) => {
+      e.stopPropagation();
+      deleteMessage(msgIndex);
+    };
+    // 重试仅对助手消息有意义：重新请求其对应上文
+    if (role === "assistant") {
+      const retryBtn = document.createElement("button");
+      retryBtn.className = "msg-action";
+      retryBtn.title = "重试这条回答";
+      retryBtn.innerHTML = svgIcon("retry");
+      retryBtn.onclick = (e) => {
+        e.stopPropagation();
+        retryFrom(msgIndex);
+      };
+      bar.appendChild(retryBtn);
+    }
+    bar.appendChild(delBtn);
+  }
+  row.appendChild(div);
+  if (msgIndex !== null && currentSessionId) row.appendChild(bar);
+  box.appendChild(row);
   box.scrollTop = box.scrollHeight;
-  return div;
+  return div; // 返回气泡，供上层插入 reasoning 折叠块
 }
 
 async function refreshSessions() {
@@ -178,7 +267,8 @@ async function refreshSessions() {
     const title = document.createElement("span");
     title.textContent = s.title;
     title.style.flex = "1";
-    title.onclick = () => openSession(s.id);
+    li.style.cursor = "pointer";
+    li.onclick = () => openSession(s.id);
     const renameBtn = document.createElement("button");
     renameBtn.className = "item-btn";
     renameBtn.title = "重命名";
@@ -236,8 +326,8 @@ async function newSession() {
 }
 
 // 渲染一条助手消息（支持思考折叠块），返回元素
-function renderAssistant(text, reasoning) {
-  const el = addMsgEl("assistant", text); // 正文已按 markdown 渲染
+function renderAssistant(text, reasoning, msgIndex = null) {
+  const el = addMsgEl("assistant", text, true, msgIndex); // 正文已按 markdown 渲染
   if (reasoning) {
     const wrap = document.createElement("details");
     wrap.className = "reasoning";
@@ -264,15 +354,28 @@ async function openSession(id) {
     .map((m) => ({ role: m.role, content: m.content }));
   const box = $("#chatBox");
   box.innerHTML = "";
+  // 先确定最新一轮 user 消息下标（仅这一轮显示编辑按钮），再渲染
+  lastUserMsgIndex = null;
+  let mIdxPre = 0;
+  s.messages
+    .filter((m) => m.role !== "system")
+    .forEach((m) => {
+      if (m.role === "user") lastUserMsgIndex = mIdxPre;
+      mIdxPre++;
+    });
+  let mIdx = 0; // 仅统计 user/assistant 的下标，与后端 delete_message 对齐
   s.messages
     .filter((m) => m.role !== "system")
     .forEach((m) => {
       if (m.role === "assistant") {
-        renderAssistant(m.content, m.reasoning || null);
+        renderAssistant(m.content, m.reasoning || null, mIdx);
       } else {
-        addMsgEl(m.role, m.content);
+        addMsgEl(m.role, m.content, true, mIdx);
       }
+      mIdx++;
     });
+  // 渲染完成后滚动到最底部
+  box.scrollTop = box.scrollHeight;
   refreshSessions();
   // 切换后清理其他空会话（保留当前正在查看的）
   await cleanupEmptySessions(currentSessionId);
@@ -288,26 +391,19 @@ async function cleanupEmptySessions(excludeId) {
   }
 }
 
-// ------------------------- 发送消息 -------------------------
-async function sendMessage() {
-  const input = $("#userInput");
-  const text = input.value.trim();
-  if (!text) return;
-
+// ------------------------- 发送/重试核心 -------------------------
+// 流式请求助手回复并渲染到 assistantEl。userText 仅用于首次写入历史；
+// saveHistory=true 时会把 user+assistant 两条消息写入后端会话历史。
+// 返回 { full, reasoning } 供调用方更新内存 conversation。
+// writeUser=true 时额外把 user 消息写入历史（仅首次发送需要；重试时 user 已在历史中）。
+async function streamAssistant(userText, assistantEl, saveHistory, writeUser = true) {
   const apiKey = loadApiKey();
   if (!apiKey) {
-    alert("请先点击右上角设置按钮，在设置面板中输入 API Key");
-    return;
+    assistantEl.textContent = "[错误] 请先点击右上角设置按钮，在设置面板中输入 API Key";
+    return null;
   }
   const model = $("#modelSelect").value;
 
-  // 渲染用户消息
-  addMsgEl("user", text);
-  input.value = "";
-  conversation.push({ role: "user", content: text });
-
-  // 渲染助手占位
-  const assistantEl = addMsgEl("assistant", "");
   // 推理过程折叠块：默认不创建，仅当真正收到 reasoning 内容时才按需创建
   let reasoningWrap = null;
   let reasoningBody = null;
@@ -326,96 +422,214 @@ async function sendMessage() {
     return reasoningWrap;
   };
 
+  let full = "";
+  let reasoning = "";
+  let mode = "reasoning"; // 当前渲染模式：reasoning / answer
+  // 累积缓冲：网络分包可能把标记切开，或把多个标记拼在一起，
+  // 必须按标记边界切分，只处理完整片段，尾部不完整部分留到下次。
+  let buffer = "";
+  const MARK = "<<REASONING>>";
+  const MARK_A = "<<ANSWER>>";
+  const MAX_PREFIX = Math.max(MARK.length, MARK_A.length) - 1; // 可能形成标记的最大残留长度
+  const flush = () => {
+    // 在 buffer 中找最先出现的完整标记
+    const idxR = buffer.indexOf(MARK);
+    const idxA = buffer.indexOf(MARK_A);
+    let next = -1;
+    let nextMode = null;
+    if (idxR !== -1 && (idxA === -1 || idxR < idxA)) {
+      next = idxR; nextMode = "reasoning";
+    } else if (idxA !== -1) {
+      next = idxA; nextMode = "answer";
+    }
+    if (next === -1) {
+      // buffer 中没有完整标记：把不可能再拼接成标记的安全前缀先渲染，
+      // 保留末尾最多 MAX_PREFIX 个字符（可能是被切开的标记的一部分）。
+      if (buffer.length > MAX_PREFIX) {
+        const safeLen = buffer.length - MAX_PREFIX;
+        applyChunk(buffer.slice(0, safeLen));
+        buffer = buffer.slice(safeLen);
+      }
+      return;
+    }
+    // next 之前是上一段的延续文本（无新标记前缀），按当前 mode 处理
+    const before = buffer.slice(0, next);
+    if (before) applyChunk(before);
+    // 切换到新标记模式
+    mode = nextMode;
+    buffer = buffer.slice(next + (nextMode === "reasoning" ? MARK : MARK_A).length);
+    // 递归处理剩余 buffer（可能还含下一个标记）
+    flush();
+  };
+  // 正文容器：markdown 渲染只作用于此，不影响思考折叠块
+  const answerDiv = document.createElement("div");
+  answerDiv.className = "msg-content";
+  assistantEl.appendChild(answerDiv);
+  const applyChunk = (text) => {
+    if (!text) return;
+    if (mode === "reasoning") {
+      reasoning += text;
+      ensureReasoning();
+      reasoningBody.textContent = reasoning; // 流式实时显示纯文本
+    } else {
+      if (reasoning && reasoningWrap && reasoningWrap.open) reasoningWrap.open = false;
+      answerDiv.appendChild(document.createTextNode(text)); // 流式实时显示纯文本
+      full += text;
+    }
+    $("#chatBox").scrollTop = $("#chatBox").scrollHeight;
+  };
+  await streamChat(
+    {
+      api_key: apiKey,
+      model,
+      messages: conversation,
+      ...readParamsFromUI(),
+    },
+    (chunk) => {
+      buffer += chunk;
+      flush();
+    }
+  );
+  // 流结束后处理残留缓冲
+  if (buffer) {
+    applyChunk(buffer);
+    buffer = "";
+  }
+  // 流式结束后再做一次 Markdown 渲染（思考与正文都生效）
+  if (reasoning && reasoningBody) renderMarkdown(reasoningBody, reasoning);
+  renderMarkdown(answerDiv, full);
+  // 存历史：content 存纯回答（用于渲染+上传），reasoning 单独存（仅渲染）
+  if (saveHistory && currentSessionId) {
+    if (writeUser) await apiPost("/api/sessions/" + currentSessionId + "/msg", { role: "user", content: userText });
+    await apiPost("/api/sessions/" + currentSessionId + "/msg", {
+      role: "assistant",
+      content: full,
+      reasoning: reasoning || undefined,
+    });
+    refreshSessions();
+  }
+  return { full, reasoning };
+}
+
+// ------------------------- 删除 / 重试消息 -------------------------
+
+// 编辑最新一轮的提问：取出原文本填入输入框，并删除该轮（user+assistant）。
+// 用户修改后发送，新的一轮即取代原位置。仅最新一轮可触发。
+async function editMessage(index) {
+  if (!currentSessionId || index !== lastUserMsgIndex) return;
+  const s = await apiGet("/api/sessions/" + currentSessionId);
+  const chat = (s.messages || []).filter((m) => m.role !== "system");
+  if (index < 0 || index >= chat.length || chat[index].role !== "user") return;
+  const original = chat[index].content;
+  // 成对删除该轮（user + 紧跟的 assistant），不弹确认
+  let second = -1;
+  if (chat[index + 1] && chat[index + 1].role === "assistant") second = index + 1;
+  const hi = Math.max(index, second);
+  const lo = Math.min(index, second);
+  await apiDelete("/api/sessions/" + currentSessionId + "/msg/" + hi);
+  if (second !== -1) await apiDelete("/api/sessions/" + currentSessionId + "/msg/" + lo);
+  lastUserMsgIndex = null; // 该轮即将被删除，临时清空
+  await openSession(currentSessionId);
+  // 预填输入框并聚焦，等待用户修改后发送
+  const input = $("#userInput");
+  input.value = original;
+  input.focus();
+}
+
+// 删除第 index 条消息（不含 system），并重新渲染会话。
+// 按「轮次」成对删除：删除 user 时连同其后紧跟的 assistant 一起删，
+// 删除 assistant 时连同其前紧邻的 user 一起删；不成对则单独删。
+async function deleteMessage(index) {
+  if (!currentSessionId) return;
+  if (!confirm("确定删除这条消息（及其同轮消息）？")) return;
+  // 读取当前会话，判断是否存在成对消息
+  const s = await apiGet("/api/sessions/" + currentSessionId);
+  const chat = (s.messages || []).filter((m) => m.role !== "system");
+  if (index < 0 || index >= chat.length) return;
+  const role = chat[index].role;
+  let second = -1; // 成对消息的下标（-1 表示无配对）
+  if (role === "user" && chat[index + 1] && chat[index + 1].role === "assistant") {
+    second = index + 1;
+  } else if (role === "assistant" && chat[index - 1] && chat[index - 1].role === "user") {
+    second = index - 1;
+  }
+  // 先删较大的下标，避免删除前一条导致后一条下标前移而误删
+  if (second !== -1) {
+    const hi = Math.max(index, second);
+    const lo = Math.min(index, second);
+    await apiDelete("/api/sessions/" + currentSessionId + "/msg/" + hi);
+    await apiDelete("/api/sessions/" + currentSessionId + "/msg/" + lo);
+  } else {
+    await apiDelete("/api/sessions/" + currentSessionId + "/msg/" + index);
+  }
+  // 用后端数据重新渲染，保证内存与磁盘一致
+  await openSession(currentSessionId);
+}
+
+// 重试：删除第 msgIndex（助手消息）及其之后的所有消息，
+// 以该助手对应的上文重新请求一次
+async function retryFrom(msgIndex) {
+  if (!currentSessionId) return;
+  const sendBtn = $("#sendBtn");
+  if (sendBtn.disabled) return; // 避免与正在进行的请求冲突
+  // 删除该助手消息及其后所有消息：反复删除同一个下标直到该下标越界
+  while (true) {
+    const s = await apiDelete("/api/sessions/" + currentSessionId + "/msg/" + msgIndex);
+    if (s && s.error) break; // 下标已越界或无会话
+    // 判断是否还有消息，防止无限循环
+    const list = await apiGet("/api/sessions/" + currentSessionId);
+    const chatCount = (list.messages || []).filter((m) => m.role !== "system").length;
+    if (chatCount <= msgIndex) break;
+  }
+  // 依据最新后端数据重建内存态与 UI
+  const s = await apiGet("/api/sessions/" + currentSessionId);
+  conversation = s.messages
+    .filter((m) => m.role !== "system")
+    .map((m) => ({ role: m.role, content: m.content }));
+  // 该助手消息对应的用户提问在 conversation 中位于 msgIndex-1
+  const userText = conversation[msgIndex - 1] ? conversation[msgIndex - 1].content : "";
+  // 重新渲染会话（此时尾部已被删掉）
+  await openSession(currentSessionId);
+  // 在会话末尾追加一个新的助手占位并流式请求（user 提问仍在 conversation 中，作为上下文）
+  const assistantEl = addMsgEl("assistant", "", true, msgIndex);
+  try {
+    sendBtn.disabled = true;
+    const res = await streamAssistant(userText, assistantEl, true, false);
+    if (res) conversation.push({ role: "assistant", content: res.full });
+  } catch (e) {
+    assistantEl.textContent = "[错误] " + e.message;
+  } finally {
+    sendBtn.disabled = false;
+  }
+}
+
+// ------------------------- 发送消息 -------------------------
+async function sendMessage() {
+  const input = $("#userInput");
+  const text = input.value.trim();
+  if (!text) return;
+
+  const apiKey = loadApiKey();
+  if (!apiKey) {
+    alert("请先点击右上角设置按钮，在设置面板中输入 API Key");
+    return;
+  }
+
+  // 渲染用户消息（传入下标，使操作条可见）
+  const userIdx = conversation.length;
+  lastUserMsgIndex = userIdx; // 最新一轮，显示编辑按钮（渲染前先设置）
+  addMsgEl("user", text, true, userIdx);
+  input.value = "";
+  conversation.push({ role: "user", content: text });
+
+  // 渲染助手占位（下标紧随用户消息之后）
+  const assistantEl = addMsgEl("assistant", "", true, userIdx + 1);
+
   const sendBtn = $("#sendBtn");
   sendBtn.disabled = true;
   try {
-    let full = "";
-    let reasoning = "";
-    let mode = "reasoning"; // 当前渲染模式：reasoning / answer
-    // 累积缓冲：网络分包可能把标记切开，或把多个标记拼在一起，
-    // 必须按标记边界切分，只处理完整片段，尾部不完整部分留到下次。
-    let buffer = "";
-    const MARK = "<<REASONING>>";
-    const MARK_A = "<<ANSWER>>";
-    const MAX_PREFIX = Math.max(MARK.length, MARK_A.length) - 1; // 可能形成标记的最大残留长度
-    const flush = () => {
-      // 在 buffer 中找最先出现的完整标记
-      const idxR = buffer.indexOf(MARK);
-      const idxA = buffer.indexOf(MARK_A);
-      let next = -1;
-      let nextMode = null;
-      if (idxR !== -1 && (idxA === -1 || idxR < idxA)) {
-        next = idxR; nextMode = "reasoning";
-      } else if (idxA !== -1) {
-        next = idxA; nextMode = "answer";
-      }
-      if (next === -1) {
-        // buffer 中没有完整标记：把不可能再拼接成标记的安全前缀先渲染，
-        // 保留末尾最多 MAX_PREFIX 个字符（可能是被切开的标记的一部分）。
-        if (buffer.length > MAX_PREFIX) {
-          const safeLen = buffer.length - MAX_PREFIX;
-          applyChunk(buffer.slice(0, safeLen));
-          buffer = buffer.slice(safeLen);
-        }
-        return;
-      }
-      // next 之前是上一段的延续文本（无新标记前缀），按当前 mode 处理
-      const before = buffer.slice(0, next);
-      if (before) applyChunk(before);
-      // 切换到新标记模式
-      mode = nextMode;
-      buffer = buffer.slice(next + (nextMode === "reasoning" ? MARK : MARK_A).length);
-      // 递归处理剩余 buffer（可能还含下一个标记）
-      flush();
-    };
-    // 正文容器：markdown 渲染只作用于此，不影响思考折叠块
-    const answerDiv = document.createElement("div");
-    answerDiv.className = "msg-content";
-    assistantEl.appendChild(answerDiv);
-    const applyChunk = (text) => {
-      if (!text) return;
-      if (mode === "reasoning") {
-        reasoning += text;
-        ensureReasoning();
-        reasoningBody.textContent = reasoning; // 流式实时显示纯文本
-      } else {
-        if (reasoning && reasoningWrap && reasoningWrap.open) reasoningWrap.open = false;
-        answerDiv.appendChild(document.createTextNode(text)); // 流式实时显示纯文本
-        full += text;
-      }
-      $("#chatBox").scrollTop = $("#chatBox").scrollHeight;
-    };
-    await streamChat(
-      {
-        api_key: apiKey,
-        model,
-        messages: conversation,
-        ...readParamsFromUI(),
-      },
-      (chunk) => {
-        buffer += chunk;
-        flush();
-      }
-    );
-    // 流结束后处理残留缓冲
-    if (buffer) {
-      applyChunk(buffer);
-      buffer = "";
-    }
-    // 流式结束后再做一次 Markdown 渲染（思考与正文都生效）
-    if (reasoning && reasoningBody) renderMarkdown(reasoningBody, reasoning);
-    renderMarkdown(answerDiv, full);
-    // 存历史：content 存纯回答（用于渲染+上传），reasoning 单独存（仅渲染）
-    if (currentSessionId) {
-      await apiPost("/api/sessions/" + currentSessionId + "/msg", { role: "user", content: text });
-      await apiPost("/api/sessions/" + currentSessionId + "/msg", {
-        role: "assistant",
-        content: full,
-        reasoning: reasoning || undefined,
-      });
-      refreshSessions();
-    }
-    conversation.push({ role: "assistant", content: full });
+    const res = await streamAssistant(text, assistantEl, true);
+    if (res) conversation.push({ role: "assistant", content: res.full });
   } catch (e) {
     assistantEl.textContent = "[错误] " + e.message;
   } finally {
