@@ -75,6 +75,11 @@ async function init() {
     document.documentElement.setAttribute("data-theme", t);
     localStorage.setItem("dsw_theme", t);
     themeBtn.title = t === "dark" ? "切换到浅色" : "切换到深色";
+    // 同步切换代码高亮配色
+    const light = $("#hljsLight");
+    const dark = $("#hljsDark");
+    if (light) light.disabled = t === "dark";
+    if (dark) dark.disabled = t !== "dark";
   };
   applyTheme(localStorage.getItem("dsw_theme") || "light");
   themeBtn.onclick = () => {

@@ -5,6 +5,54 @@ function renderMarkdown(el, text) {
   const src = (text || "").trim();
   el.innerHTML = (window.marked ? marked.parse(src) : src);
   if (!src) el.textContent = "";
+  attachCodeCopy(el); // 渲染完成后为每个代码块附加"单独复制"按钮
+}
+
+// 为容器内所有代码块（pre code）附加独立的复制按钮。
+// 已有按钮的代码块跳过（幂等）：流式增量渲染时会对新增块重复调用。
+function attachCodeCopy(container) {
+  if (!container || !container.querySelectorAll) return;
+  container.querySelectorAll("pre").forEach((pre) => {
+    if (pre.querySelector(":scope > .code-copy-btn")) return;
+    const code = pre.querySelector("code");
+    if (!code) return;
+    // 语法高亮：仅对带语言标签的代码块高亮（无语言时不自动检测，避免误判）
+    if (window.hljs) {
+      const langMatch = (code.className || "").match(/language-([\w+#.-]+)/);
+      if (langMatch) {
+        try {
+          hljs.highlightElement(code);
+        } catch (_) {
+          /* 未知语言等异常忽略，代码保持原样 */
+        }
+      }
+    }
+    // 语言标签：从 code 类名提取（如 language-python），无则显示"plain text"
+    const langEl = document.createElement("span");
+    langEl.className = "code-lang";
+    const langMatch = (code.className || "").match(/language-([\w+#.-]+)/);
+    langEl.textContent = langMatch ? langMatch[1] : "plain text";
+    pre.appendChild(langEl);
+    const btn = document.createElement("button");
+    btn.className = "code-copy-btn";
+    btn.type = "button";
+    btn.title = "复制代码";
+    btn.innerHTML = svgIcon("copy");
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const txt = code.innerText;
+      const done = () => {
+        btn.innerHTML = svgIcon("check");
+        setTimeout(() => (btn.innerHTML = svgIcon("copy")), 1200);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(txt).then(done).catch(() => fallbackCopy(txt, done));
+      } else {
+        fallbackCopy(txt, done);
+      }
+    };
+    pre.appendChild(btn);
+  });
 }
 
 // 渲染一条消息气泡。返回气泡元素（div），供上层插入 reasoning 折叠块。

@@ -4,6 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>DeepSeek WebUI</title>
+  <!-- 代码高亮配色（浅/深各一套，按当前主题启用；先于业务样式加载，便于业务样式覆盖） -->
+  <link rel="stylesheet" href="/static/vendor/hljs-github.min.css" id="hljsLight" />
+  <link rel="stylesheet" href="/static/vendor/hljs-dark.min.css" id="hljsDark" disabled />
   <link rel="stylesheet" href="/static/style-light.css" />
   <link rel="stylesheet" href="/static/style-dark.css" />
   <!-- 文档解析库（用于将 pdf/docx/xlsx/pptx/odt 等二进制文档抽取为纯文本） -->
@@ -16,6 +19,11 @@
     (function () {
       var t = localStorage.getItem("dsw_theme") || "light";
       document.documentElement.setAttribute("data-theme", t);
+      // 同步启用对应主题的代码高亮配色
+      var light = document.getElementById("hljsLight");
+      var dark = document.getElementById("hljsDark");
+      if (light) light.disabled = t === "dark";
+      if (dark) dark.disabled = t !== "dark";
     })();
   </script>
 </head>
@@ -134,6 +142,7 @@
   </aside>
 
   <script src="/static/vendor/marked.min.js"></script>
+  <script src="/static/vendor/highlight.min.js"></script>
   <script src="/static/file_reader.js"></script>
   <!-- 前端主逻辑按依赖顺序拆分加载：基础工具 → API → 渲染 → 会话 → 聊天 → 入口 -->
   <script src="/static/icons.js"></script>

@@ -115,6 +115,7 @@ async function streamAssistant(userText, assistantEl, saveHistory, writeUser = t
     const html = (window.marked ? marked.parse(seg) : seg);
     const tmp = document.createElement("div");
     tmp.innerHTML = html;
+    attachCodeCopy(tmp); // 新定型的代码块立即附加"单独复制"按钮（幂等）
     // 草稿节点若已挂到 answerDiv 则插到其前，否则直接追加（避免 insertBefore 目标不在树中报错）
     while (tmp.firstChild) {
       if (draftAttached) answerDiv.insertBefore(tmp.firstChild, draftNode);
