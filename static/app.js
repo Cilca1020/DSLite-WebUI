@@ -15,6 +15,7 @@ const ICONS = {
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>',
   retry: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>',
   copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+  copyMd: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2" ry="2"/><path d="M6 9v6M6 15l2-2 2 2M14 9v6M14 9h3a1.5 1.5 0 0 1 0 3h-3" stroke-width="1.8"/></svg>',
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>',
   edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
 };
@@ -189,6 +190,8 @@ function addMsgEl(role, text, markdown = true, msgIndex = null, files = null) {
   } else {
     div.textContent = text || "";
   }
+  // 保存原始 markdown 源，供"复制为 Markdown"使用
+  div._rawText = text || "";
   // 文件卡片（仅用户消息携带文件时存在）：渲染在气泡上方
   if (role === "user" && files && files.length) {
     row.appendChild(buildFileCardsEl(files));
@@ -198,10 +201,10 @@ function addMsgEl(role, text, markdown = true, msgIndex = null, files = null) {
   if (msgIndex !== null && currentSessionId) {
     bar = document.createElement("div");
     bar.className = "msg-actions";
-    // 复制按钮：复制气泡纯文本（排除思考过程折叠块与文件卡片）
+    // 复制纯文本按钮：复制气泡纯文本（排除思考过程折叠块与文件卡片）
     const copyBtn = document.createElement("button");
     copyBtn.className = "msg-action";
-    copyBtn.title = "复制这条消息";
+    copyBtn.title = "复制为纯文本";
     copyBtn.innerHTML = svgIcon("copy");
     copyBtn.onclick = (e) => {
       e.stopPropagation();
@@ -221,6 +224,28 @@ function addMsgEl(role, text, markdown = true, msgIndex = null, files = null) {
       }
     };
     bar.appendChild(copyBtn);
+    // 复制为 Markdown 按钮：使用消息原始 markdown 源（排除思考过程折叠块）
+    // 仅助手消息提供（用户提问通常无需 Markdown 源码）
+    if (role === "assistant") {
+      const copyMdBtn = document.createElement("button");
+      copyMdBtn.className = "msg-action md-btn";
+      copyMdBtn.title = "复制为 Markdown";
+      copyMdBtn.textContent = "MD";
+      copyMdBtn.onclick = (e) => {
+        e.stopPropagation();
+        const md = (div._rawText || div.innerText || "").trim();
+        const done = () => {
+          copyMdBtn.innerHTML = svgIcon("check");
+          setTimeout(() => (copyMdBtn.textContent = "MD"), 1200);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(md).then(done).catch(() => fallbackCopy(md, done));
+        } else {
+          fallbackCopy(md, done);
+        }
+      };
+      bar.appendChild(copyMdBtn);
+    }
     // 编辑按钮：仅最新一轮的 user 消息显示
     if (role === "user" && msgIndex === lastUserMsgIndex) {
       const editBtn = document.createElement("button");
@@ -542,6 +567,8 @@ async function streamAssistant(userText, assistantEl, saveHistory, writeUser = t
   // 流式结束后再做一次 Markdown 渲染（思考与正文都生效）
   if (reasoning && reasoningBody) renderMarkdown(reasoningBody, reasoning);
   renderMarkdown(answerDiv, full);
+  // 流式结束后保存原始 markdown 源，供"复制为 Markdown"使用
+  assistantEl._rawText = full;
   // 存历史：content 存纯回答（用于渲染+上传），reasoning 单独存（仅渲染）
   if (saveHistory && currentSessionId) {
     if (writeUser)

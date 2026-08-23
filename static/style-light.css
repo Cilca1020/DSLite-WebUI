@@ -367,6 +367,14 @@ body {
 .msg-action:hover { background: var(--hover); color: var(--text); border-color: var(--accent); }
 .msg-action svg { width: 19px; height: 19px; display: block; }
 .msg-action svg { width: 15px; height: 15px; display: block; }
+/* 复制为 Markdown 文字按钮：与图标按钮同宽同高，居中显示 "MD" 字样 */
+.md-btn {
+  width: 34px;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
 .msg.user {
   align-self: flex-end;
   background: var(--msg-user-bg);
