@@ -1,8 +1,13 @@
 /* 初始化与启动入口 */
 
+// 移动端布局判断：以设备横竖屏为准（竖屏 = 移动端布局）。
+// 桌面显示器恒为横屏，不会误判；iPad 竖屏也会按移动端处理。
+const portraitMQ = window.matchMedia("(orientation: portrait)");
+const isMobileLayout = () => portraitMQ.matches;
+
 async function init() {
-  // 移动端（≤768px）：默认收起侧边栏，避免首次进入即遮挡对话区
-  if (window.matchMedia("(max-width: 768px)").matches) {
+  // 竖屏（手机 / 竖持平板）：默认收起侧边栏，避免首次进入即遮挡对话区
+  if (isMobileLayout()) {
     document.querySelector(".app").setAttribute("data-sidebar", "collapsed");
   }
   // 模型列表
@@ -124,10 +129,26 @@ async function init() {
   };
   // 移动端：点击侧栏中的会话/预设/新建按钮后自动收起抽屉
   document.querySelector(".sidebar").addEventListener("click", (e) => {
-    if (!window.matchMedia("(max-width: 768px)").matches) return;
+    if (!isMobileLayout()) return;
     if (e.target.closest("li, .sidebar-head button")) {
       document.querySelector(".app").setAttribute("data-sidebar", "collapsed");
     }
+  });
+  // 移动端：侧栏打开时，点击侧栏之外的区域（对话区）也可关闭抽屉
+  document.querySelector(".main").addEventListener("click", (e) => {
+    if (!isMobileLayout()) return;
+    if (e.target.closest("#toggleSidebarBtn")) return; // 开关按钮交给它自己处理
+    const app = document.querySelector(".app");
+    if (app.getAttribute("data-sidebar") === "open") {
+      app.setAttribute("data-sidebar", "collapsed");
+    }
+  });
+  // 旋转屏幕时同步侧栏状态：竖屏收起（抽屉式）、横屏展开，保证与 CSS 布局一致
+  window.addEventListener("orientationchange", () => {
+    document.querySelector(".app").setAttribute(
+      "data-sidebar",
+      isMobileLayout() ? "collapsed" : "open"
+    );
   });
 
   // 刷新侧栏

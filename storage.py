@@ -10,6 +10,8 @@ import os
 import time
 import uuid
 
+import config
+
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 SESSIONS_DIR = os.path.join(DATA_DIR, "sessions")
 PRESETS_FILE = os.path.join(DATA_DIR, "presets.json")
@@ -116,8 +118,27 @@ def rename_session(sid, title):
     return session
 
 
+def _is_user_configured(session):
+    """判断会话是否被用户改过配置（模型或推理参数不同于默认值）。
+
+    新建会话写入的是默认配置；用户一旦在界面上改过模型或参数，
+    就会通过 /config 接口持久化到会话里。这里通过对比默认值来判断，
+    避免把“用户配好了但还没发消息”的会话当垃圾清掉。
+    """
+    if session.get("model") != config.SUPPORTED_MODELS[0]["id"]:
+        return True
+    params = session.get("params") or {}
+    for key, default_val in config.DEFAULT_PARAMS.items():
+        if params.get(key) != default_val:
+            return True
+    return False
+
+
 def cleanup_empty_sessions(exclude_id=None):
     """删除所有空会话（无消息），可排除某个 id（如当前正在查看的）。
+
+    只清理“完全保持默认配置”的空会话；用户改过模型或参数的会话
+    即使还没有消息也保留。
 
     返回被删除的会话 id 列表。
     """
@@ -135,7 +156,7 @@ def cleanup_empty_sessions(exclude_id=None):
                 s = json.load(f)
         except (json.JSONDecodeError, OSError):
             continue
-        if len(s.get("messages", [])) == 0:
+        if len(s.get("messages", [])) == 0 and not _is_user_configured(s):
             os.remove(path)
             removed.append(sid)
     return removed
