@@ -31,6 +31,8 @@
   --accent: #4f7cff;
   --accent-hover: #3f6cf0;
   --accent-disabled: #3a4a7a;
+  --accent-soft: #232b40; /* 拖放高亮背景 */
+  --chip-bg: #2c313b;
 
   /* Markdown 代码块/表格等 */
   --code-bg: #16191f;

@@ -32,6 +32,8 @@
   --accent: #4f7cff;
   --accent-hover: #3f6cf0;
   --accent-disabled: #a9c0ff;
+  --accent-soft: #eaf0ff; /* 拖放高亮背景 */
+  --chip-bg: #f2f3f5;
 
   /* Markdown 代码块/表格等 */
   --code-bg: #f3f4f6;
@@ -474,10 +476,75 @@ body {
 /* 输入栏 */
 .input-bar {
   display: flex;
+  flex-direction: column;
   gap: 8px;
   padding: 12px 14px;
   background: var(--bg-topbar);
   border-top: 1px solid var(--border);
+  transition: background 0.15s, box-shadow 0.15s;
+}
+/* 拖放文件时的高亮反馈 */
+.input-bar.drag-over {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+/* 文件区：位于输入框上方 */
+.file-zone {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.attach-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px dashed var(--input-border);
+  background: var(--field-bg);
+  color: var(--text-dim);
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.attach-btn:hover { background: var(--hover); color: var(--text); border-color: var(--accent); }
+.attach-btn svg { width: 16px; height: 16px; display: block; }
+/* 已选文件卡片（输入框上方的小标签） */
+.file-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 8px;
+  background: var(--chip-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+  max-width: 220px;
+}
+.file-chip-icon { color: var(--text-dim); display: inline-flex; }
+.file-chip-icon svg { width: 14px; height: 14px; display: block; }
+.file-chip-meta { display: inline-flex; flex-direction: column; line-height: 1.2; min-width: 0; }
+.file-chip-name {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; color: var(--text);
+}
+.file-chip-size { font-size: 10px; color: var(--text-dim); }
+.file-chip-del {
+  border: none; background: transparent; color: var(--text-dim);
+  font-size: 16px; line-height: 1; cursor: pointer; padding: 0 2px; border-radius: 4px;
+}
+.file-chip-del:hover { background: var(--hover); color: var(--text); }
+/* 输入框 + 发送按钮一行 */
+.input-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
 }
 .user-input {
   flex: 1;
@@ -501,6 +568,32 @@ body {
 }
 .send-btn:hover { background: var(--accent-hover); }
 .send-btn:disabled { background: var(--accent-disabled); cursor: not-allowed; }
+
+/* 聊天气泡内的文件卡片：代表文件的气泡，显示在用户气泡上方 */
+.file-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end; /* 跟随用户气泡右对齐 */
+  margin-bottom: 8px;
+}
+.file-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 260px;
+  padding: 6px 10px;
+  background: var(--chip-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.file-card-icon { display: inline-flex; color: var(--accent); }
+.file-card-icon svg { width: 15px; height: 15px; display: block; }
+.file-card-name {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text);
+}
 
 /* 滚动容器统一：预留滚动条空间，避免内容被挤压导致右侧元素偏移 */
 .sidebar,

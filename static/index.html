@@ -6,6 +6,11 @@
   <title>DeepSeek WebUI</title>
   <link rel="stylesheet" href="/static/style-light.css" />
   <link rel="stylesheet" href="/static/style-dark.css" />
+  <!-- 文档解析库（用于将 pdf/docx/xlsx/pptx/odt 等二进制文档抽取为纯文本） -->
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <!-- 防闪烁：在样式应用前先确定主题 -->
   <script>
     (function () {
@@ -49,9 +54,20 @@
       <div id="chatBox" class="chat-box"></div>
 
       <footer class="input-bar">
-        <textarea id="userInput" class="user-input" rows="2"
-                  placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
-        <button id="sendBtn" class="send-btn">发送</button>
+        <!-- 文件区：位于输入框上方，含浏览按钮与已选文件卡片 -->
+        <div id="fileZone" class="file-zone">
+          <button id="attachBtn" class="attach-btn" type="button" title="添加文本文件">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+            <span>添加文件</span>
+          </button>
+          <input id="fileInput" type="file" multiple accept=".txt,.md,.markdown,.json,.csv,.tsv,.log,.yaml,.yml,.xml,.ini,.toml,.conf,.py,.js,.ts,.html,.css,.c,.cpp,.h,.java,.go,.rs,.rb,.php,.sql,.sh,.bat,.ps1,.tex,.rtf,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.odt,.ods,.odp,.gitignore,.dockerfile,text/*" style="display:none" />
+          <div id="fileChips" class="file-chips"></div>
+        </div>
+        <div class="input-row">
+          <textarea id="userInput" class="user-input" rows="2"
+                    placeholder="输入消息，Enter 发送，Shift+Enter 换行。也可拖放文本文件到此处"></textarea>
+          <button id="sendBtn" class="send-btn">发送</button>
+        </div>
       </footer>
     </main>
   </div>
@@ -118,6 +134,7 @@
   </aside>
 
   <script src="/static/vendor/marked.min.js"></script>
+  <script src="/static/file_reader.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

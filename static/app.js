@@ -177,7 +177,7 @@ function renderMarkdown(el, text) {
   if (!src) el.textContent = "";
 }
 
-function addMsgEl(role, text, markdown = true, msgIndex = null) {
+function addMsgEl(role, text, markdown = true, msgIndex = null, files = null) {
   const box = $("#chatBox");
   // 每行容器：包裹气泡 + 气泡外的操作条
   const row = document.createElement("div");
@@ -189,12 +189,16 @@ function addMsgEl(role, text, markdown = true, msgIndex = null) {
   } else {
     div.textContent = text || "";
   }
+  // 文件卡片（仅用户消息携带文件时存在）：渲染在气泡上方
+  if (role === "user" && files && files.length) {
+    row.appendChild(buildFileCardsEl(files));
+  }
   // 消息工具条：常驻显示在气泡外右下方（不依赖 hover，便于移动端）
   let bar = null;
   if (msgIndex !== null && currentSessionId) {
     bar = document.createElement("div");
     bar.className = "msg-actions";
-    // 复制按钮：复制气泡纯文本（排除思考过程折叠块）
+    // 复制按钮：复制气泡纯文本（排除思考过程折叠块与文件卡片）
     const copyBtn = document.createElement("button");
     copyBtn.className = "msg-action";
     copyBtn.title = "复制这条消息";
@@ -204,6 +208,7 @@ function addMsgEl(role, text, markdown = true, msgIndex = null) {
       const clone = div.cloneNode(true);
       const r = clone.querySelector(".reasoning");
       if (r) r.remove();
+      // 复制只包含用户输入文本，不含文件内容
       const txt = clone.innerText.trim();
       const done = () => {
         copyBtn.innerHTML = svgIcon("check");
@@ -255,6 +260,28 @@ function addMsgEl(role, text, markdown = true, msgIndex = null) {
   box.appendChild(row);
   box.scrollTop = box.scrollHeight;
   return div; // 返回气泡，供上层插入 reasoning 折叠块
+}
+
+// 构建"文件卡片"元素（代表文件的气泡），供用户消息渲染使用
+function buildFileCardsEl(files) {
+  const wrap = document.createElement("div");
+  wrap.className = "file-cards";
+  files.forEach((f) => {
+    const card = document.createElement("div");
+    card.className = "file-card";
+    const icon = document.createElement("span");
+    icon.className = "file-card-icon";
+    icon.innerHTML =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>';
+    const name = document.createElement("span");
+    name.className = "file-card-name";
+    name.textContent = f.name;
+    name.title = f.name;
+    card.appendChild(icon);
+    card.appendChild(name);
+    wrap.appendChild(card);
+  });
+  return wrap;
 }
 
 async function refreshSessions() {
@@ -348,10 +375,10 @@ async function openSession(id) {
   currentSessionId = id;
   // 载入该会话独立的 model + 推理参数
   applyConfigToUI(s.model, s.params);
-  // content 始终是纯回答，直接用于模型上下文；reasoning 仅渲染
+  // content 始终是纯回答，直接用于模型上下文；reasoning 仅渲染；files 仅 user 消息携带
   conversation = s.messages
     .filter((m) => m.role !== "system")
-    .map((m) => ({ role: m.role, content: m.content }));
+    .map((m) => ({ role: m.role, content: m.content, files: m.files || null }));
   const box = $("#chatBox");
   box.innerHTML = "";
   // 先确定最新一轮 user 消息下标（仅这一轮显示编辑按钮），再渲染
@@ -370,7 +397,7 @@ async function openSession(id) {
       if (m.role === "assistant") {
         renderAssistant(m.content, m.reasoning || null, mIdx);
       } else {
-        addMsgEl(m.role, m.content, true, mIdx);
+        addMsgEl(m.role, m.content, true, mIdx, m.files || null);
       }
       mIdx++;
     });
@@ -396,7 +423,8 @@ async function cleanupEmptySessions(excludeId) {
 // saveHistory=true 时会把 user+assistant 两条消息写入后端会话历史。
 // 返回 { full, reasoning } 供调用方更新内存 conversation。
 // writeUser=true 时额外把 user 消息写入历史（仅首次发送需要；重试时 user 已在历史中）。
-async function streamAssistant(userText, assistantEl, saveHistory, writeUser = true) {
+// files：该轮用户消息携带的文本文件（{name, content}），随 user 消息一起存入历史。
+async function streamAssistant(userText, assistantEl, saveHistory, writeUser = true, files = null) {
   const apiKey = loadApiKey();
   if (!apiKey) {
     assistantEl.textContent = "[错误] 请先点击右上角设置按钮，在设置面板中输入 API Key";
@@ -482,7 +510,23 @@ async function streamAssistant(userText, assistantEl, saveHistory, writeUser = t
     {
       api_key: apiKey,
       model,
-      messages: conversation,
+      // 把用户消息携带的文本文件内容拼接到对应 user 的 content 中，
+      // 使模型能看到文件内容（files 本身不作为独立消息）
+      messages: conversation.map((m) => {
+        if (m.role === "user" && m.files && m.files.length) {
+          const appended = m.files
+            .map((f) => {
+              if (f.binary) {
+                // 二进制办公文档：以 base64 附件形式标注（文本模型仅能识别为附件）
+                return `\n\n--- 附件（二进制，${f.name}，${f.content.length} 字节 base64）：请知悉该文件为二进制文档，无法在此直接解析内容 ---`;
+              }
+              return `\n\n--- 文件内容：${f.name} ---\n${f.content}`;
+            })
+            .join("");
+          return { role: "user", content: (m.content || "") + appended };
+        }
+        return { role: m.role, content: m.content };
+      }),
       ...readParamsFromUI(),
     },
     (chunk) => {
@@ -500,7 +544,12 @@ async function streamAssistant(userText, assistantEl, saveHistory, writeUser = t
   renderMarkdown(answerDiv, full);
   // 存历史：content 存纯回答（用于渲染+上传），reasoning 单独存（仅渲染）
   if (saveHistory && currentSessionId) {
-    if (writeUser) await apiPost("/api/sessions/" + currentSessionId + "/msg", { role: "user", content: userText });
+    if (writeUser)
+      await apiPost("/api/sessions/" + currentSessionId + "/msg", {
+        role: "user",
+        content: userText,
+        files: files && files.length ? files : undefined,
+      });
     await apiPost("/api/sessions/" + currentSessionId + "/msg", {
       role: "assistant",
       content: full,
@@ -530,9 +579,14 @@ async function editMessage(index) {
   if (second !== -1) await apiDelete("/api/sessions/" + currentSessionId + "/msg/" + lo);
   lastUserMsgIndex = null; // 该轮即将被删除，临时清空
   await openSession(currentSessionId);
-  // 预填输入框并聚焦，等待用户修改后发送
+  // 预填输入框，并把原文件恢复回待发送队列（用户可保留或重新选择）
   const input = $("#userInput");
   input.value = original;
+  if (window.FileReaderModule) {
+    FileReaderModule.clearPendingFiles();
+    const originalFiles = chat[index].files || [];
+    if (originalFiles.length) FileReaderModule.addFilesFromData(originalFiles);
+  }
   input.focus();
 }
 
@@ -581,20 +635,22 @@ async function retryFrom(msgIndex) {
     const chatCount = (list.messages || []).filter((m) => m.role !== "system").length;
     if (chatCount <= msgIndex) break;
   }
-  // 依据最新后端数据重建内存态与 UI
+  // 依据最新后端数据重建内存态与 UI（保留文件信息）
   const s = await apiGet("/api/sessions/" + currentSessionId);
   conversation = s.messages
     .filter((m) => m.role !== "system")
-    .map((m) => ({ role: m.role, content: m.content }));
+    .map((m) => ({ role: m.role, content: m.content, files: m.files || null }));
   // 该助手消息对应的用户提问在 conversation 中位于 msgIndex-1
-  const userText = conversation[msgIndex - 1] ? conversation[msgIndex - 1].content : "";
+  const userMsg = conversation[msgIndex - 1] || { content: "", files: null };
+  const userText = userMsg.content || "";
+  const userFiles = userMsg.files || null;
   // 重新渲染会话（此时尾部已被删掉）
   await openSession(currentSessionId);
   // 在会话末尾追加一个新的助手占位并流式请求（user 提问仍在 conversation 中，作为上下文）
   const assistantEl = addMsgEl("assistant", "", true, msgIndex);
   try {
     sendBtn.disabled = true;
-    const res = await streamAssistant(userText, assistantEl, true, false);
+    const res = await streamAssistant(userText, assistantEl, true, false, userFiles);
     if (res) conversation.push({ role: "assistant", content: res.full });
   } catch (e) {
     assistantEl.textContent = "[错误] " + e.message;
@@ -607,7 +663,9 @@ async function retryFrom(msgIndex) {
 async function sendMessage() {
   const input = $("#userInput");
   const text = input.value.trim();
-  if (!text) return;
+  // 文本与文件至少有一种；都为空则忽略
+  const files = window.FileReaderModule ? FileReaderModule.getPendingFiles() : [];
+  if (!text && files.length === 0) return;
 
   const apiKey = loadApiKey();
   if (!apiKey) {
@@ -615,12 +673,15 @@ async function sendMessage() {
     return;
   }
 
-  // 渲染用户消息（传入下标，使操作条可见）
+  // 渲染用户消息（传入下标，使操作条可见）；携带文件时在气泡上方渲染文件卡片
   const userIdx = conversation.length;
   lastUserMsgIndex = userIdx; // 最新一轮，显示编辑按钮（渲染前先设置）
-  addMsgEl("user", text, true, userIdx);
+  addMsgEl("user", text || "（已发送文件）", true, userIdx, files);
   input.value = "";
-  conversation.push({ role: "user", content: text });
+  conversation.push({ role: "user", content: text, files: files.length ? files : null });
+
+  // 发送后立即清空输入框上方的待发送文件卡片（不等输出完成）
+  if (window.FileReaderModule) FileReaderModule.clearPendingFiles();
 
   // 渲染助手占位（下标紧随用户消息之后）
   const assistantEl = addMsgEl("assistant", "", true, userIdx + 1);
@@ -628,7 +689,7 @@ async function sendMessage() {
   const sendBtn = $("#sendBtn");
   sendBtn.disabled = true;
   try {
-    const res = await streamAssistant(text, assistantEl, true);
+    const res = await streamAssistant(text, assistantEl, true, true, files);
     if (res) conversation.push({ role: "assistant", content: res.full });
   } catch (e) {
     assistantEl.textContent = "[错误] " + e.message;

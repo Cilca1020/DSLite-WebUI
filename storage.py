@@ -162,11 +162,13 @@ def delete_message(sid, index):
     return session
 
 
-def append_message(sid, role, content, reasoning=None):
+def append_message(sid, role, content, reasoning=None, files=None):
     """向指定会话追加一条消息。
 
     reasoning: 仅用于渲染（如思考过程），不参与模型上下文；
                content 始终为纯回答文本，同时用于渲染与上传。
+    files:     可选，user 消息携带的本地文件列表，每项 {name, content}；
+               仅用于渲染与模型上下文拼接，不参与对话 role 计数。
     每次追加会刷新 updated_at（用于按最近互动排序）。
     """
     session = get_session(sid)
@@ -179,6 +181,12 @@ def append_message(sid, role, content, reasoning=None):
     }
     if reasoning is not None:
         msg["reasoning"] = reasoning
+    if files is not None:
+        # 仅保留必要字段，避免存储冗余信息
+        msg["files"] = [
+            {"name": f.get("name", ""), "content": f.get("content", "")}
+            for f in files
+        ]
     session.setdefault("messages", []).append(msg)
     session["updated_at"] = time.time()
     save_session(session)

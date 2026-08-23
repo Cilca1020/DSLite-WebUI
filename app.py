@@ -203,9 +203,10 @@ def api_append_msg(sid):
     role = data.get("role")
     content = data.get("content", "")
     reasoning = data.get("reasoning")
+    files = data.get("files")
     if role not in ("user", "assistant"):
         return jsonify({"error": "role 必须为 user 或 assistant"}), 400
-    session = storage.append_message(sid, role, content, reasoning=reasoning)
+    session = storage.append_message(sid, role, content, reasoning=reasoning, files=files)
     return jsonify(session)
 
 
