@@ -271,7 +271,7 @@ body {
   gap: 4px;
   margin-bottom: 12px;
 }
-.settings-group label.block { margin-bottom: 0; }
+.settings-group label.block { margin-bottom: 10px; } /* 与下方按钮等兄弟元素留出间距 */
 .settings-group input,
 .settings-group textarea {
   padding: 7px 9px;

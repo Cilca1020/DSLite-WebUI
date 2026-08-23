@@ -1,0 +1,76 @@
+/* 移动端响应式适配（≤768px）
+   独立文件便于维护；仅覆盖移动端需要的布局差异，桌面端不受影响 */
+
+@media (max-width: 768px) {
+  /* ---- 视口高度锁定：100vh 在移动端会包含地址栏/工具栏占位，
+     导致整页可滚动、顶栏/底栏被顶出可视区。
+     改用 100dvh（动态视口高）+ 禁止 body 滚动，使顶栏/底栏常驻、仅对话区内部滚动 ---- */
+  html, body { height: 100%; overflow: hidden; }
+  .app { height: 100vh; height: 100dvh; }
+
+  /* ---- 侧边栏：改为左侧覆盖式抽屉 ----
+     桌面版靠 width 缩放收起；移动版用 transform 滑入滑出，宽度保持 240px */
+  .sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 240px;
+    z-index: 30;
+    box-shadow: 4px 0 16px rgba(0, 0, 0, 0.18);
+    transition: transform 0.28s ease, opacity 0.2s ease;
+  }
+  .app[data-sidebar="open"] .sidebar {
+    transform: translateX(0);
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .app[data-sidebar="collapsed"] .sidebar {
+    width: 240px; /* 覆盖桌面版 width:0 的收起方式 */
+    padding-left: 12px;
+    padding-right: 12px;
+    transform: translateX(-100%);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* ---- 顶部栏：grid 三列布局，强制右侧按钮贴右、模型选择器不溢出 ---- */
+  .topbar {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 6px;
+    padding: 8px 10px;
+  }
+  .model-select { min-width: 0; max-width: 100%; font-size: 12px; padding: 7px 8px; }
+  .topbar-right { display: flex; gap: 8px; }
+
+  /* ---- 对话区：气泡加宽，充分利用窄屏 ---- */
+  .chat-box { padding: 12px 10px; gap: 10px; }
+  .msg { max-width: 92%; padding: 12px 14px; font-size: 15px; }
+  .msg.assistant { width: 92%; }
+  .msg.user { max-width: 88%; }
+  /* 代码块顶部工具条间距在窄屏下略微收紧；字号略小于正文（正文 15px），移动端更紧凑 */
+  .msg pre, .reasoning-body pre { padding: 38px 10px 8px; font-size: 13px; }
+
+  /* ---- 消息操作条：按钮加大，方便触控 ---- */
+  .msg-action { width: 38px; height: 38px; }
+
+  /* ---- 输入栏 ---- */
+  .input-bar { padding: 10px; }
+  /* iOS Safari 聚焦缩放规避：输入框字号 ≥16px（聚焦缩放的判断依据是输入框 font-size，
+     与 placeholder 无关），placeholder 单独缩小并淡化 */
+  .user-input { font-size: 16px; padding: 8px 10px; }
+  .user-input::placeholder { font-size: 13px; color: var(--text-dim); opacity: 1; }
+  .send-btn { padding: 0 18px; }
+
+  /* ---- 设置面板：移动端全宽抽屉 ---- */
+  .settings-panel {
+    width: 100vw;
+    max-width: 100vw;
+    height: 100vh;
+    height: 100dvh; /* iOS 地址栏收缩后自适应 */
+  }
+
+  /* ---- 侧栏内容间距微调 ---- */
+  .sidebar { padding: 10px; gap: 12px; }
+}

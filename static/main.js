@@ -1,6 +1,10 @@
 /* 初始化与启动入口 */
 
 async function init() {
+  // 移动端（≤768px）：默认收起侧边栏，避免首次进入即遮挡对话区
+  if (window.matchMedia("(max-width: 768px)").matches) {
+    document.querySelector(".app").setAttribute("data-sidebar", "collapsed");
+  }
   // 模型列表
   const models = await apiGet("/api/models");
   const sel = $("#modelSelect");
@@ -118,6 +122,13 @@ async function init() {
     const collapsed = app.getAttribute("data-sidebar") === "collapsed";
     app.setAttribute("data-sidebar", collapsed ? "open" : "collapsed");
   };
+  // 移动端：点击侧栏中的会话/预设/新建按钮后自动收起抽屉
+  document.querySelector(".sidebar").addEventListener("click", (e) => {
+    if (!window.matchMedia("(max-width: 768px)").matches) return;
+    if (e.target.closest("li, .sidebar-head button")) {
+      document.querySelector(".app").setAttribute("data-sidebar", "collapsed");
+    }
+  });
 
   // 刷新侧栏
   refreshSessions();
