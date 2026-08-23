@@ -1,5 +1,5 @@
 /* 文件读取模块：本地常用文本 / 办公文档读取、浏览、拖放、待发送队列与 UI。
- * 全局暴露 window.FileReaderModule，供 app.js 调用。
+ * 全局暴露 window.FileReaderModule，供前端主逻辑模块调用。
  * - 文本类文件：直接读为文本（content 为文本）。
  * - 二进制办公文档（pdf/docx/xlsx/pptx/rtf/odt 等）：读为 base64（content 为 data URL），
  *   发送时以附件形式标注，便于模型识别为二进制资料。

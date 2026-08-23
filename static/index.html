@@ -135,6 +135,12 @@
 
   <script src="/static/vendor/marked.min.js"></script>
   <script src="/static/file_reader.js"></script>
-  <script src="/static/app.js"></script>
+  <!-- 前端主逻辑按依赖顺序拆分加载：基础工具 → API → 渲染 → 会话 → 聊天 → 入口 -->
+  <script src="/static/icons.js"></script>
+  <script src="/static/api.js"></script>
+  <script src="/static/render.js"></script>
+  <script src="/static/sessions.js"></script>
+  <script src="/static/chat.js"></script>
+  <script src="/static/main.js"></script>
 </body>
 </html>

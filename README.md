@@ -21,8 +21,15 @@ DeepSeek_WebUI/
 ├── config.py         # 配置（端口、默认模型、支持的模型列表）
 ├── static/           # 前端
 │   ├── index.html
-│   ├── style.css
-│   └── app.js
+│   ├── style-light.css / style-dark.css
+│   ├── icons.js      # 基础工具与全局状态
+│   ├── api.js        # 网络请求封装
+│   ├── render.js     # 渲染逻辑（markdown / 消息气泡）
+│   ├── sessions.js   # 参数读写与会话管理
+│   ├── chat.js       # 流式输出与消息操作
+│   ├── main.js       # 初始化入口
+│   ├── file_reader.js  # 文件读取模块
+│   └── vendor/       # 第三方库（marked 等）
 ├── data/             # 运行时生成（会话/预设 JSON，已被 .gitignore 忽略）
 └── requirements.txt
 ```
