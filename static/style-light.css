@@ -65,7 +65,19 @@ body {
   flex-direction: column;
   padding: 12px;
   gap: 16px;
+  overflow-x: hidden;
   overflow-y: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
+  transition: width 0.28s ease, opacity 0.2s ease, padding 0.28s ease;
+}
+/* 收起：宽度归零 + 淡出，内容被裁切（不换行） */
+.app[data-sidebar="collapsed"] .sidebar {
+  width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 .sidebar-section { flex: 1; }
 .sidebar-head {
@@ -184,14 +196,22 @@ body {
 }
 .mini-btn:hover { background: var(--btn-hover); }
 
-/* 设置面板：右侧抽屉 + 遮罩 */
+/* 设置面板：右侧抽屉 + 遮罩（平滑滑入滑出） */
 .settings-overlay {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.35);
   z-index: 40;
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 0.28s ease, visibility 0s;
 }
-.settings-overlay.hidden { display: none; }
+.settings-overlay.hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.28s ease, visibility 0s 0.28s;
+}
 .settings-panel {
   position: fixed;
   top: 0;
@@ -205,8 +225,16 @@ body {
   display: flex;
   flex-direction: column;
   box-shadow: -4px 0 16px rgba(0, 0, 0, 0.12);
+  transform: translateX(0);
+  visibility: visible;
+  transition: transform 0.28s ease, visibility 0s;
 }
-.settings-panel.hidden { display: none; }
+.settings-panel.hidden {
+  transform: translateX(100%);
+  visibility: hidden;
+  pointer-events: none;
+  transition: transform 0.28s ease, visibility 0s 0.28s;
+}
 .settings-head {
   display: flex;
   justify-content: space-between;

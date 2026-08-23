@@ -729,6 +729,12 @@ async function init() {
     }
   });
   $("#newSessionBtn").onclick = newSession;
+  // 侧边栏收起/展开
+  $("#toggleSidebarBtn").onclick = () => {
+    const app = document.querySelector(".app");
+    const collapsed = app.getAttribute("data-sidebar") === "collapsed";
+    app.setAttribute("data-sidebar", collapsed ? "open" : "collapsed");
+  };
 
   // 刷新侧栏
   refreshSessions();

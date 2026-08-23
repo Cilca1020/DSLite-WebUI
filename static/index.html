@@ -15,7 +15,7 @@
   </script>
 </head>
 <body>
-  <div class="app">
+  <div class="app" data-sidebar="open">
     <!-- 侧边栏：会话 + 预设 -->
     <aside class="sidebar">
       <div class="sidebar-section">
@@ -32,6 +32,9 @@
     <!-- 主区：对话 -->
     <main class="main">
       <header class="topbar">
+        <button id="toggleSidebarBtn" class="icon-btn" title="收起/展开侧边栏">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+        </button>
         <select id="modelSelect" class="model-select"></select>
         <div class="topbar-right">
           <button id="themeBtn" class="icon-btn" title="切换深色/浅色">
