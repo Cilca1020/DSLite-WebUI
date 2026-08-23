@@ -72,14 +72,20 @@ async function init() {
   // 深色/浅色切换
   const themeBtn = $("#themeBtn");
   const applyTheme = (t) => {
-    document.documentElement.setAttribute("data-theme", t);
+    const html = document.documentElement;
+    html.classList.add("theme-transition"); // 启用渐变动画，切换完成后移除
+    html.setAttribute("data-theme", t);
     localStorage.setItem("dsw_theme", t);
+    // 太阳/月亮切换：浅色下显示月亮（可切入夜间），深色下显示太阳（可切回白天）
     themeBtn.title = t === "dark" ? "切换到浅色" : "切换到深色";
+    themeBtn.innerHTML = t === "dark" ? svgIcon("sun") : svgIcon("moon");
     // 同步切换代码高亮配色
     const light = $("#hljsLight");
     const dark = $("#hljsDark");
     if (light) light.disabled = t === "dark";
     if (dark) dark.disabled = t !== "dark";
+    // 渐变结束后移除过渡类，恢复各元素的常规交互过渡
+    setTimeout(() => html.classList.remove("theme-transition"), 320);
   };
   applyTheme(localStorage.getItem("dsw_theme") || "light");
   themeBtn.onclick = () => {

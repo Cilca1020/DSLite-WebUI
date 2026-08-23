@@ -139,6 +139,8 @@ body {
 }
 .icon-btn:hover { background: var(--btn-hover); }
 .icon-btn svg { width: 16px; height: 16px; }
+/* 太阳图标（填充式）在 16px 下视觉偏小，单独放大 */
+.icon-btn .icon-sun { width: 20px; height: 20px; }
 /* 列表项内的小图标按钮 */
 .item-btn {
   display: inline-flex;
@@ -418,6 +420,14 @@ body {
   max-width: 100%;
   white-space: pre;
 }
+/* 主题切换过渡：仅切换期间由 main.js 短暂启用（.theme-transition），避免常驻动画干扰 */
+html.theme-transition *,
+html.theme-transition *::before,
+html.theme-transition *::after {
+  transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease,
+    fill 0.3s ease, stroke 0.3s ease, box-shadow 0.3s ease !important;
+}
+
 /* 代码块右上角"单独复制"按钮（常驻显示，不依赖悬停） */
 .code-copy-btn {
   position: absolute;
