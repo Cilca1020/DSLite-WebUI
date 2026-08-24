@@ -75,6 +75,30 @@ async function streamAssistant(userText, assistantEl, saveHistory, writeUser = t
   answerDiv.className = "msg-content";
   assistantEl.appendChild(answerDiv);
 
+  // 流式输出未开始前，气泡内显示"加载中"动画（收到首个内容块即移除）
+  const loadingEl = document.createElement("div");
+  loadingEl.className = "msg-loading";
+  loadingEl.innerHTML = '<span class="spinner"></span><span class="msg-loading-text">思考中…</span>';
+  assistantEl.insertBefore(loadingEl, answerDiv);
+  // 加载动画插入会撑高气泡，立即滚动置底（否则加载期间滚动条停在上方）
+  $("#chatBox").scrollTop = $("#chatBox").scrollHeight;
+  const hideLoading = () => {
+    if (loadingEl && loadingEl.parentNode) loadingEl.remove();
+  };
+  // 流式输出结束后才显示助手气泡操作条（复制/重试/删除等），带滑入动画
+  const showActions = () => {
+    const row = assistantEl.parentNode;
+    const bar = row && row.querySelector(".msg-actions");
+    if (bar) {
+      bar.style.display = "flex";
+      bar.classList.remove("msg-actions-in");
+      void bar.offsetWidth; // 强制重排，确保动画从头播放
+      bar.classList.add("msg-actions-in");
+    }
+    // 操作条显示会撑高消息行，滚动到底部让新内容完整可见
+    $("#chatBox").scrollTop = $("#chatBox").scrollHeight;
+  };
+
   // ---- 企业级增量渲染：已定型块永久固定，仅末尾"未闭合草稿"以纯文本显示 ----
   // 设计：answerDiv 内由「已渲染的块元素们」+「一个草稿 span 节点」组成。
   // 每当累积文本越过一个"块级安全断点"，就把 [renderedLen, 断点) 这一段
@@ -144,6 +168,7 @@ async function streamAssistant(userText, assistantEl, saveHistory, writeUser = t
 
   const applyChunk = (text) => {
     if (!text) return;
+    hideLoading(); // 收到首个内容块即移除加载动画
     if (mode === "reasoning") {
       reasoning += text;
       ensureReasoning();
@@ -155,39 +180,47 @@ async function streamAssistant(userText, assistantEl, saveHistory, writeUser = t
     }
     $("#chatBox").scrollTop = $("#chatBox").scrollHeight;
   };
-  await streamChat(
-    {
-      api_key: apiKey,
-      model,
-      // 把用户消息携带的文本文件内容拼接到对应 user 的 content 中，
-      // 使模型能看到文件内容（files 本身不作为独立消息）
-      messages: conversation.map((m) => {
-        if (m.role === "user" && m.files && m.files.length) {
-          const appended = m.files
-            .map((f) => {
-              if (f.binary) {
-                // 二进制办公文档：以 base64 附件形式标注（文本模型仅能识别为附件）
-                return `\n\n--- 附件（二进制，${f.name}，${f.content.length} 字节 base64）：请知悉该文件为二进制文档，无法在此直接解析内容 ---`;
-              }
-              return `\n\n--- 文件内容：${f.name} ---\n${f.content}`;
-            })
-            .join("");
-          return { role: "user", content: (m.content || "") + appended };
-        }
-        return { role: m.role, content: m.content };
-      }),
-      ...readParamsFromUI(),
-    },
-    (chunk) => {
-      buffer += chunk;
-      flush();
-    }
-  );
+  try {
+    await streamChat(
+      {
+        api_key: apiKey,
+        model,
+        // 把用户消息携带的文本文件内容拼接到对应 user 的 content 中，
+        // 使模型能看到文件内容（files 本身不作为独立消息）
+        messages: conversation.map((m) => {
+          if (m.role === "user" && m.files && m.files.length) {
+            const appended = m.files
+              .map((f) => {
+                if (f.binary) {
+                  // 二进制办公文档：以 base64 附件形式标注（文本模型仅能识别为附件）
+                  return `\n\n--- 附件（二进制，${f.name}，${f.content.length} 字节 base64）：请知悉该文件为二进制文档，无法在此直接解析内容 ---`;
+                }
+                return `\n\n--- 文件内容：${f.name} ---\n${f.content}`;
+              })
+              .join("");
+            return { role: "user", content: (m.content || "") + appended };
+          }
+          return { role: m.role, content: m.content };
+        }),
+        ...readParamsFromUI(),
+      },
+      (chunk) => {
+        buffer += chunk;
+        flush();
+      }
+    );
+  } catch (e) {
+    hideLoading(); // 异常时移除加载动画；输出已结束（失败），同样显示操作条
+    showActions();
+    throw e;
+  }
   // 流结束后处理残留缓冲
   if (buffer) {
     applyChunk(buffer);
     buffer = "";
   }
+  hideLoading(); // 流结束兜底移除加载动画（即使未收到任何内容块）
+  showActions(); // 流式输出结束后再显示操作条
   // 收尾：把剩余草稿也定型渲染，移除纯文本草稿节点（不整段重渲染，已定型块不动）
   flushRendered(full.length);
   if (draftAttached) {

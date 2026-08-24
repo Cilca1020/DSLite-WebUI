@@ -415,6 +415,20 @@ body {
   margin-top: 6px;
   justify-content: flex-end;
 }
+/* 流式输出结束后操作条的滑入动画（淡入 + 轻微上移） */
+.msg-actions-in {
+  animation: msg-actions-in 0.25s ease;
+}
+@keyframes msg-actions-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
 .msg-action {
   width: 34px;
   height: 34px;
@@ -453,6 +467,27 @@ body {
   border: 1px solid var(--msg-assistant-border);
   /* 助手消息固定 75% 宽，所有助手气泡左边缘对齐统一 */
   width: 75%;
+}
+/* 助手气泡加载中动画：流式输出未开始前显示 */
+.msg-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1;
+}
+.msg-loading .spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--reasoning-border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: msg-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes msg-spin {
+  to { transform: rotate(360deg); }
 }
 /* Markdown 渲染进 .msg 本身：取消 pre-wrap，让块级标签正常排版 */
 .msg > :first-child { margin-top: 0; }

@@ -183,6 +183,9 @@ function addMsgEl(role, text, markdown = true, msgIndex = null, files = null) {
   }
   row.appendChild(div);
   if (msgIndex !== null && currentSessionId) row.appendChild(bar);
+  // 流式占位的助手气泡（空文本）在输出结束前隐藏操作条，
+  // 结束后由 streamAssistant 以滑入动画显示（display:none 不占位，气泡更紧凑）
+  if (bar && role === "assistant" && !text) bar.style.display = "none";
   box.appendChild(row);
   hideEmptyHint(box); // 有新消息时移除空会话欢迎提示
   box.scrollTop = box.scrollHeight;
