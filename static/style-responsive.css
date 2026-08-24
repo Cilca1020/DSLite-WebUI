@@ -48,14 +48,14 @@
 
   /* ---- 对话区：气泡加宽，充分利用窄屏 ---- */
   .chat-box { padding: 12px 10px; gap: 10px; }
-  .msg { max-width: 92%; padding: 12px 14px; font-size: 15px; }
+  .msg { max-width: 92%; padding: 12px 14px; font-size: var(--msg-font-size, 14px); }
   .msg.assistant { width: 92%; }
   .msg.user { max-width: 88%; }
   /* 代码块顶部工具条间距在窄屏下略微收紧；字号略小于正文（正文 15px），移动端更紧凑 */
   .msg pre, .reasoning-body pre { padding: 38px 10px 8px; font-size: 13px; }
 
-  /* ---- 消息操作条：按钮加大，方便触控 ---- */
-  .msg-action { width: 38px; height: 38px; }
+  /* ---- 消息操作条：按钮略小于桌面 34px，移动端更紧凑 ---- */
+  .msg-action { width: 30px; height: 30px; }
 
   /* ---- 输入栏 ---- */
   .input-bar { padding: 10px; }

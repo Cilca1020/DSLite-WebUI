@@ -313,6 +313,29 @@ body {
   color: var(--text-sidebar-dim);
 }
 
+/* 主题色色块选择器 */
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px; /* 与上方小标题留足间距，避免高亮放大时贴上 */
+}
+.swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-body);
+  box-shadow: 0 0 0 1px var(--border);
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.swatch:hover { transform: scale(1.1); }
+.swatch.active {
+  box-shadow: 0 0 0 2px var(--text-main), 0 0 0 3.5px var(--bg-body);
+  transform: scale(1.05); /* 高亮仅轻微放大，避免顶到上方文字 */
+}
+
 /* 对话区 */
 .chat-box {
   flex: 1;
@@ -328,7 +351,7 @@ body {
   min-width: 0; /* 关键：允许 flex item 收缩，长代码/URL 不再撑破气泡 */
   padding: 14px 20px;
   border-radius: 10px;
-  font-size: 14px;
+  font-size: var(--msg-font-size, 14px); /* 字号可在设置面板调整，默认 14px */
   line-height: 1.75;
   white-space: normal; /* markdown 自行处理空白，避免末尾换行节点撑出空行 */
   word-break: break-word;

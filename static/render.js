@@ -3,7 +3,8 @@
 // 将文本以 Markdown 渲染进元素（思考与正文通用）
 function renderMarkdown(el, text) {
   const src = (text || "").trim();
-  el.innerHTML = (window.marked ? marked.parse(src) : src);
+  // marked 输出末尾带一个格式化 \n，在 white-space:pre-wrap 容器（如思考块）中会被渲染成多余空行，故 trim
+  el.innerHTML = (window.marked ? marked.parse(src) : src).trim();
   if (!src) el.textContent = "";
   attachCodeCopy(el); // 渲染完成后为每个代码块附加"单独复制"按钮
 }

@@ -56,6 +56,22 @@ async function init() {
   // API Key
   $("#apiKeyInput").value = loadApiKey();
   $("#apiKeyInput").addEventListener("change", (e) => saveApiKey(e.target.value));
+
+  // 消息字号设置（localStorage 持久化，通过 CSS 变量 --msg-font-size 全局生效）
+  const MSG_FONT_KEY = "dsw_msg_font_size";
+  const applyMsgFont = (v) => {
+    const px = Math.max(12, Math.min(20, parseInt(v, 10) || 14));
+    document.documentElement.style.setProperty("--msg-font-size", px + "px");
+    return px;
+  };
+  const msgFontInput = $("#msgFontSize");
+  msgFontInput.value = localStorage.getItem(MSG_FONT_KEY) || 14;
+  applyMsgFont(msgFontInput.value);
+  msgFontInput.addEventListener("change", () => {
+    const px = applyMsgFont(msgFontInput.value);
+    msgFontInput.value = px; // 写回钳制后的合法值
+    localStorage.setItem(MSG_FONT_KEY, px);
+  });
   $("#clearKeyBtn").onclick = () => {
     saveApiKey("");
     $("#apiKeyInput").value = "";
@@ -78,6 +94,34 @@ async function init() {
   $("#closeSettingsBtn").onclick = closeSettings;
   $("#settingsOverlay").onclick = closeSettings;
 
+  // 主题色预设（浅/深各一套；选用常见、不猎奇的色系）
+  const THEME_COLORS = {
+    blue:   { label: "蓝",   light: { accent: "#4f7cff", hover: "#3f6cf0", disabled: "#a9c0ff", soft: "#eaf0ff" }, dark: { accent: "#4f7cff", hover: "#3f6cf0", disabled: "#3a4a7a", soft: "#232b40" } },
+    teal:   { label: "青",   light: { accent: "#14b8a6", hover: "#0d9488", disabled: "#8ce0d6", soft: "#e4f7f4" }, dark: { accent: "#14b8a6", hover: "#0d9488", disabled: "#155e56", soft: "#123a35" } },
+    green:  { label: "绿",   light: { accent: "#22c55e", hover: "#16a34a", disabled: "#a6e8bd", soft: "#e8f8ef" }, dark: { accent: "#22c55e", hover: "#16a34a", disabled: "#1b5e38", soft: "#123b22" } },
+    orange: { label: "橙",   light: { accent: "#f59e0b", hover: "#d97706", disabled: "#fbd38d", soft: "#fef3e0" }, dark: { accent: "#f59e0b", hover: "#d97706", disabled: "#8a5b18", soft: "#4a3a15" } },
+    purple: { label: "紫",   light: { accent: "#8b5cf6", hover: "#7c3aed", disabled: "#c4b5fd", soft: "#f1ebfe" }, dark: { accent: "#8b5cf6", hover: "#7c3aed", disabled: "#54408f", soft: "#33295c" } },
+    rose:   { label: "玫红", light: { accent: "#ec4899", hover: "#db2777", disabled: "#f9a8d4", soft: "#fdeaf5" }, dark: { accent: "#ec4899", hover: "#db2777", disabled: "#8f3d66", soft: "#4a2440" } },
+  };
+  const ACCENT_KEY = "dsw_accent_color";
+  let currentAccent = localStorage.getItem(ACCENT_KEY) || "blue";
+  if (!THEME_COLORS[currentAccent]) currentAccent = "blue";
+  // 把主题色写入 CSS 变量（发送按钮、用户气泡、链接、hover 等自动跟随）
+  const applyAccent = () => {
+    const theme = document.documentElement.getAttribute("data-theme") || "light";
+    const vars = THEME_COLORS[currentAccent][theme] || THEME_COLORS[currentAccent].light;
+    const s = document.documentElement.style;
+    s.setProperty("--accent", vars.accent);
+    s.setProperty("--accent-hover", vars.hover);
+    s.setProperty("--accent-disabled", vars.disabled);
+    s.setProperty("--accent-soft", vars.soft);
+    s.setProperty("--msg-user-bg", vars.accent);
+    // 同步色块选中态
+    document.querySelectorAll(".swatch").forEach((el) =>
+      el.classList.toggle("active", el.dataset.key === currentAccent)
+    );
+  };
+
   // 深色/浅色切换
   const themeBtn = $("#themeBtn");
   const applyTheme = (t) => {
@@ -93,9 +137,29 @@ async function init() {
     const dark = $("#hljsDark");
     if (light) light.disabled = t === "dark";
     if (dark) dark.disabled = t !== "dark";
+    // 主题色按当前深浅主题取对应配色
+    applyAccent();
     // 渐变结束后移除过渡类，恢复各元素的常规交互过渡
     setTimeout(() => html.classList.remove("theme-transition"), 320);
   };
+  // 生成主题色色块并初始化选中态
+  const swatchesEl = $("#accentSwatches");
+  Object.keys(THEME_COLORS).forEach((key) => {
+    const c = THEME_COLORS[key];
+    const sw = document.createElement("button");
+    sw.type = "button";
+    sw.className = "swatch";
+    sw.dataset.key = key;
+    sw.title = c.label;
+    sw.style.background = c.light.accent;
+    sw.onclick = () => {
+      currentAccent = key;
+      localStorage.setItem(ACCENT_KEY, key);
+      applyAccent();
+    };
+    swatchesEl.appendChild(sw);
+  });
+  applyAccent();
   applyTheme(localStorage.getItem("dsw_theme") || "light");
   themeBtn.onclick = () => {
     const cur = document.documentElement.getAttribute("data-theme");
