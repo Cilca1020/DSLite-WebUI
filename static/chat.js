@@ -333,7 +333,11 @@ async function retryFrom(msgIndex) {
   const userFiles = userMsg.files || null;
   // 重新渲染会话（此时尾部已被删掉）
   await openSession(currentSessionId);
+  // 删除后剩余的"最后一条助手消息"只是暂时的，马上会被新回答取代，
+  // 先清掉其重试按钮，避免出现"倒数第二条也能重试"的误标
+  document.querySelectorAll(".msg-actions .retry-btn").forEach((b) => b.remove());
   // 在会话末尾追加一个新的助手占位并流式请求（user 提问仍在 conversation 中，作为上下文）
+  lastAssistantMsgIndex = msgIndex; // 新回答为最后一条助手消息，显示重试按钮（渲染前先设置）
   const assistantEl = addMsgEl("assistant", "", true, msgIndex);
   try {
     sendBtn.disabled = true;
@@ -375,6 +379,7 @@ async function sendMessage() {
   if (window.FileReaderModule) FileReaderModule.clearPendingFiles();
 
   // 渲染助手占位（下标紧随用户消息之后）
+  lastAssistantMsgIndex = userIdx + 1; // 最后一条助手消息，显示重试按钮（渲染前先设置）
   const assistantEl = addMsgEl("assistant", "", true, userIdx + 1);
 
   const sendBtn = $("#sendBtn");

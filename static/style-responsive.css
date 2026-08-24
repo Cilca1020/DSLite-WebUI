@@ -54,15 +54,22 @@
   /* 代码块顶部工具条间距在窄屏下略微收紧；字号略小于正文（正文 15px），移动端更紧凑 */
   .msg pre, .reasoning-body pre { padding: 38px 10px 8px; font-size: 13px; }
 
+  /* ---- 思考过程：移动端展开时一次性展示全部内容，不启用内部滚动条 ---- */
+  .reasoning-body { max-height: none; overflow-y: visible; }
+
   /* ---- 消息操作条：按钮略小于桌面 34px，移动端更紧凑 ---- */
   .msg-action { width: 30px; height: 30px; }
 
+  /* ---- 置底按钮：移动端水平居中、尺寸略小 ---- */
+  .scroll-down-btn { bottom: 28px; width: 36px; height: 36px; }
+  .scroll-down-btn svg { width: 18px; height: 18px; }
+
   /* ---- 输入栏 ---- */
-  .input-bar { padding: 10px; }
+  .input-bar { padding: 7px 10px; }
   /* iOS Safari 聚焦缩放规避：输入框字号 ≥16px（聚焦缩放的判断依据是输入框 font-size，
      与 placeholder 无关），placeholder 单独缩小并淡化 */
-  .user-input { font-size: 16px; padding: 8px 10px; }
-  .user-input::placeholder { font-size: 13px; color: var(--text-dim); opacity: 1; }
+  .user-input { font-size: 14px; padding: 8px 10px; }
+  .user-input::placeholder { font-size: 14px; color: var(--text-dim); opacity: 1; }
   .send-btn { padding: 0 18px; }
 
   /* ---- 设置面板：移动端全宽抽屉 ---- */

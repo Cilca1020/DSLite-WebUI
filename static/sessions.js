@@ -186,13 +186,15 @@ async function openSession(id) {
     .map((m) => ({ role: m.role, content: m.content, files: m.files || null }));
   const box = $("#chatBox");
   box.innerHTML = "";
-  // 先确定最新一轮 user 消息下标（仅这一轮显示编辑按钮），再渲染
+  // 先确定最新一轮 user 消息与最后一条 assistant 消息下标（仅这些显示编辑/重试按钮），再渲染
   lastUserMsgIndex = null;
+  lastAssistantMsgIndex = null;
   let mIdxPre = 0;
   s.messages
     .filter((m) => m.role !== "system")
     .forEach((m) => {
       if (m.role === "user") lastUserMsgIndex = mIdxPre;
+      if (m.role === "assistant") lastAssistantMsgIndex = mIdxPre;
       mIdxPre++;
     });
   let mIdx = 0; // 仅统计 user/assistant 的下标，与后端 delete_message 对齐

@@ -171,6 +171,21 @@ async function init() {
     applyTheme(cur === "dark" ? "light" : "dark");
   };
 
+  // 置底按钮：滚动离开最底部时浮现，点击回到底部；最底部或无法滚动时隐藏
+  const chatBoxEl = $("#chatBox");
+  const scrollDownBtn = $("#scrollDownBtn");
+  const updateScrollDown = () => {
+    const box = chatBoxEl;
+    const canScroll = box.scrollHeight > box.clientHeight + 1;
+    const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+    scrollDownBtn.classList.toggle("hidden", !canScroll || atBottom);
+  };
+  chatBoxEl.addEventListener("scroll", updateScrollDown, { passive: true });
+  scrollDownBtn.addEventListener("click", () => {
+    chatBoxEl.scrollTop = chatBoxEl.scrollHeight; // 瞬时回底，避免长对话滚动动画过慢
+  });
+  updateScrollDown();
+
   // 按钮
   $("#sendBtn").onclick = sendMessage;
   $("#userInput").addEventListener("keydown", (e) => {

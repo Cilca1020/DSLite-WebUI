@@ -58,7 +58,13 @@
         </div>
       </header>
 
-      <div id="chatBox" class="chat-box"></div>
+      <div class="chat-wrap">
+        <div id="chatBox" class="chat-box"></div>
+        <!-- 置底按钮：悬浮在消息列表右下，滚动离开底部时浮现 -->
+        <button id="scrollDownBtn" class="scroll-down-btn hidden" type="button" title="回到底部">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg>
+        </button>
+      </div>
 
       <footer class="input-bar">
         <!-- 文件区：位于输入框上方，含浏览按钮与已选文件卡片 -->

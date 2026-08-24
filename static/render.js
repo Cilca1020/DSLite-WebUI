@@ -167,10 +167,10 @@ function addMsgEl(role, text, markdown = true, msgIndex = null, files = null) {
       e.stopPropagation();
       deleteMessage(msgIndex);
     };
-    // 重试仅对助手消息有意义：重新请求其对应上文
-    if (role === "assistant") {
+    // 重试仅对最后一条助手消息有意义：重新请求其对应上文
+    if (role === "assistant" && msgIndex === lastAssistantMsgIndex) {
       const retryBtn = document.createElement("button");
-      retryBtn.className = "msg-action";
+      retryBtn.className = "msg-action retry-btn";
       retryBtn.title = "重试这条回答";
       retryBtn.innerHTML = svgIcon("retry");
       retryBtn.onclick = (e) => {

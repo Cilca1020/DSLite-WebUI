@@ -60,3 +60,5 @@ let currentSessionId = null;
 let conversation = [];
 // 当前会话最新一轮 user 消息的下标（仅这一轮显示「编辑」按钮）；null 表示无
 let lastUserMsgIndex = null;
+// 当前会话最后一条 assistant 消息的下标（仅这一条显示「重试」按钮）；null 表示无
+let lastAssistantMsgIndex = null;
