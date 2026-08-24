@@ -43,6 +43,10 @@
 
   /* 分隔线颜色（思考块与正文之间），比边框更明显 */
   --hr-color: #c5c9d0;
+
+  /* 轻提示（toast）背景/文字 */
+  --toast-bg: rgba(31, 35, 41, 0.94);
+  --toast-text: #fff;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -345,6 +349,42 @@ body {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+/* 空会话欢迎提示：对话区无消息时居中显示 */
+.chat-empty {
+  margin: auto; /* flex 主轴（垂直）居中，剩余空间不足时退化为顶部对齐 */
+  align-self: center;
+  max-width: 460px;
+  padding: 24px;
+  text-align: center;
+  color: var(--text-dim);
+  pointer-events: none;
+  user-select: none;
+}
+.chat-empty-icon {
+  width: 60px;
+  height: 60px;
+  margin: 0 auto 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.chat-empty-icon svg {
+  width: 30px;
+  height: 30px;
+}
+.chat-empty-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-main);
+  margin-bottom: 10px;
+}
+.chat-empty-sub {
+  font-size: 14px;
+  line-height: 1.7;
 }
 .msg {
   max-width: 75%;
@@ -712,4 +752,26 @@ html.theme-transition *::after {
 .settings-body::-webkit-scrollbar-thumb:hover,
 .settings-panel::-webkit-scrollbar-thumb:hover {
   background: #aab0b8;
+}
+
+/* 轻提示（toast）：中上部居中，淡入淡出，避开顶栏、输入栏与欢迎提示 */
+.toast {
+  position: fixed;
+  top: 20%;
+  left: 50%;
+  transform: translateX(-50%) translateY(-12px);
+  background: var(--toast-bg);
+  color: var(--toast-text);
+  padding: 8px 18px;
+  border-radius: 8px;
+  font-size: 13px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease, transform 0.22s ease;
+  z-index: 9999;
+}
+.toast-show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }

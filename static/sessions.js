@@ -14,9 +14,25 @@ function saveApiKey(k) {
 
 function loadApiKey() { return localStorage.getItem(LS_KEY) || ""; }
 
-// 把当前 UI 上的 model + 推理参数保存到当前会话（每个对话一套独立配置）
+// 确保存在当前会话：未选中任何对话时，用当前 UI 的 model + 参数创建新会话。
+// 创建后立即出现在侧栏，可在左侧跳转。已选中会话时直接返回。
+async function ensureSession() {
+  if (currentSessionId) return currentSessionId;
+  const model = $("#modelSelect").value || ($("#modelSelect").options[0] || {}).value || "";
+  const s = await apiPost("/api/sessions", {
+    model: model,
+    params: readParamsFromUI(),
+  });
+  currentSessionId = s.id;
+  refreshSessions();
+  return currentSessionId;
+}
+
+// 把当前 UI 上的 model + 推理参数保存到当前会话（每个对话一套独立配置）。
+// 未选中对话时先创建会话再保存——修改配置即正式创建对话。
 async function saveSessionConfig() {
-  if (!currentSessionId) return;
+  if (!currentSessionId) await ensureSession();
+  if (!currentSessionId) return; // 创建失败则放弃保存
   const cfg = {
     model: $("#modelSelect").value,
     params: readParamsFromUI(),
@@ -135,19 +151,27 @@ async function refreshSessions() {
   });
 }
 
-async function newSession() {
-  // 新会话使用默认参数，不继承当前 UI 的配置
-  const s = await apiPost("/api/sessions", {
-    model: $("#modelSelect").value,
-    params: PARAM_DEFAULTS,
-  });
-  currentSessionId = s.id;
+// 把界面重置为「未选中对话」的空白态：清空对话区、显示「你好」欢迎提示、
+// 参数重置为默认值。不创建会话。模型沿用当前 UI 选中值（上一个浏览对话使用的模型）。
+function resetChatUI() {
+  currentSessionId = null;
   conversation = [];
-  $("#chatBox").innerHTML = "";
-  // 把 UI 重置为默认参数（避免停留在上一会话的配置）
-  applyConfigToUI($("#modelSelect").value, PARAM_DEFAULTS);
-  saveSessionConfig();
-  refreshSessions();
+  const box = $("#chatBox");
+  box.innerHTML = "";
+  showEmptyHint(box); // 未选中对话时居中显示「你好」欢迎提示
+  const model = $("#modelSelect").value || ($("#modelSelect").options[0] || {}).value || "";
+  applyConfigToUI(model, PARAM_DEFAULTS);
+  refreshSessions(); // 清除侧栏激活态
+}
+
+// 新建会话：已选中对话时重置为空白态（不创建会话）；
+// 未选中对话时提示已是最新。只有修改配置参数、prompt 或发送消息才正式创建会话。
+async function newSession() {
+  if (!currentSessionId) {
+    showToast("已经是最新对话");
+    return;
+  }
+  resetChatUI();
 }
 
 // 打开会话：载入会话配置与历史消息并渲染
@@ -185,6 +209,9 @@ async function openSession(id) {
     });
   // 渲染完成后滚动到最底部
   box.scrollTop = box.scrollHeight;
+  // 空会话（无消息）时居中显示欢迎提示，否则移除
+  if (!box.querySelector(".msg-row")) showEmptyHint(box);
+  else hideEmptyHint(box);
   refreshSessions();
   // 切换后清理其他空会话（保留当前正在查看的）
   await cleanupEmptySessions(currentSessionId);

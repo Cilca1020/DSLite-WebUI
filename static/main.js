@@ -21,7 +21,11 @@ async function init() {
   });
   // 默认选第一个模型；打开会话时会被会话自身的 model 覆盖
   if (models.length) sel.value = models[0].id;
-  sel.onchange = () => saveSessionConfig();
+  sel.onchange = () => {
+    // 已选中会话：切换模型立即保存到该会话；
+    // 未选中对话：仅更新 UI，不创建会话（待改参数/发消息时一并落库）
+    if (currentSessionId) saveSessionConfig();
+  };
 
   // 默认参数 / 范围 / 说明
   const def = await apiGet("/api/params/default");
@@ -88,7 +92,8 @@ async function init() {
     $("#settingsPanel").classList.add("hidden");
     $("#settingsOverlay").classList.add("hidden");
     $("#settingsPanel").setAttribute("aria-hidden", "true");
-    saveSessionConfig();
+    // 未选中对话时参数修改已由 change 事件创建并保存会话，这里仅在已选中时兜底保存
+    if (currentSessionId) saveSessionConfig();
   };
   $("#openSettingsBtn").onclick = openSettings;
   $("#closeSettingsBtn").onclick = closeSettings;
@@ -217,9 +222,10 @@ async function init() {
 
   // 刷新侧栏
   refreshSessions();
-  // 默认新建一个会话
-  if (!currentSessionId) await newSession();
-  // 启动时清理其他空会话（保留当前会话）
+  // 启动不自动创建会话：直接进入「未选中对话」空白态显示「你好」提示，
+  // 等用户改参数/prompt 或发消息再创建
+  resetChatUI();
+  // 启动时清理遗留的空会话（此时未选中对话，等价于清理全部空会话）
   await cleanupEmptySessions(currentSessionId);
 }
 

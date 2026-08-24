@@ -119,14 +119,12 @@ def rename_session(sid, title):
 
 
 def _is_user_configured(session):
-    """判断会话是否被用户改过配置（模型或推理参数不同于默认值）。
+    """判断会话是否被用户改过推理参数（不同于默认值）。
 
-    新建会话写入的是默认配置；用户一旦在界面上改过模型或参数，
-    就会通过 /config 接口持久化到会话里。这里通过对比默认值来判断，
-    避免把“用户配好了但还没发消息”的会话当垃圾清掉。
+    模型选择不参与该判断：空会话的自动清理只取决于是否有消息，
+    与用户选了哪个模型（如切换 chat -> reasoner）无关。
+    保留参数判断是为了避免误删“调好了参数但还没发消息”的会话。
     """
-    if session.get("model") != config.SUPPORTED_MODELS[0]["id"]:
-        return True
     params = session.get("params") or {}
     for key, default_val in config.DEFAULT_PARAMS.items():
         if params.get(key) != default_val:
@@ -137,8 +135,9 @@ def _is_user_configured(session):
 def cleanup_empty_sessions(exclude_id=None):
     """删除所有空会话（无消息），可排除某个 id（如当前正在查看的）。
 
-    只清理“完全保持默认配置”的空会话；用户改过模型或参数的会话
-    即使还没有消息也保留。
+    空会话的判定只看是否有消息，与模型选择无关：切换过模型
+    但还没发消息的会话同样会被清理；仅保留“改过推理参数
+    但还没发消息”的会话，避免误删用户配好的会话。
 
     返回被删除的会话 id 列表。
     """

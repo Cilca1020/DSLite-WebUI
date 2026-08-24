@@ -56,6 +56,25 @@ function attachCodeCopy(container) {
   });
 }
 
+// 空会话欢迎提示：对话区无消息时居中显示，有消息时移除
+function showEmptyHint(box) {
+  if (!box) box = $("#chatBox");
+  if (box.querySelector(".chat-empty")) return;
+  const empty = document.createElement("div");
+  empty.className = "chat-empty";
+  empty.innerHTML =
+    '<div class="chat-empty-icon">' + svgIcon("chat") + "</div>" +
+    '<div class="chat-empty-title">你好，想聊点什么？</div>' +
+    '<div class="chat-empty-sub">我可以帮你写代码、整理思路、解答疑问，直接输入问题即可开始。</div>';
+  box.appendChild(empty);
+}
+
+function hideEmptyHint(box) {
+  if (!box) box = $("#chatBox");
+  const el = box.querySelector(".chat-empty");
+  if (el) el.remove();
+}
+
 // 渲染一条消息气泡。返回气泡元素（div），供上层插入 reasoning 折叠块。
 // role: "user" | "assistant"；markdown 控制是否渲染 markdown（用户消息强制纯文本）；
 // msgIndex 非 null 且当前会话存在时，渲染气泡外的操作条；
@@ -165,6 +184,7 @@ function addMsgEl(role, text, markdown = true, msgIndex = null, files = null) {
   row.appendChild(div);
   if (msgIndex !== null && currentSessionId) row.appendChild(bar);
   box.appendChild(row);
+  hideEmptyHint(box); // 有新消息时移除空会话欢迎提示
   box.scrollTop = box.scrollHeight;
   return div; // 返回气泡，供上层插入 reasoning 折叠块
 }

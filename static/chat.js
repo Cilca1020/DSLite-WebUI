@@ -327,6 +327,9 @@ async function sendMessage() {
     return;
   }
 
+  // 发送消息即正式创建对话（未选中会话时在此创建，并出现在侧栏）
+  await ensureSession();
+
   // 渲染用户消息（传入下标，使操作条可见）；携带文件时在气泡上方渲染文件卡片
   // 用户消息强制纯文本：输入中若含 Markdown 语法则按原样显示，不渲染
   const userIdx = conversation.length;
