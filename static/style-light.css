@@ -407,14 +407,14 @@ body {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
-  bottom: 30px;
+  bottom: 10px;
   width: 40px;
   height: 40px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--accent);
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
   border: none;
   color: #fff;
   cursor: pointer;
@@ -423,7 +423,10 @@ body {
   transition: opacity 0.2s, visibility 0.2s, transform 0.2s, background 0.2s, box-shadow 0.2s;
 }
 .scroll-down-btn svg { width: 20px; height: 20px; display: block; }
-.scroll-down-btn:hover { background: var(--accent-hover); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.32); }
+.scroll-down-btn:hover {
+  background: color-mix(in srgb, var(--accent-hover) 70%, transparent);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.32);
+}
 .scroll-down-btn.hidden { opacity: 0; visibility: hidden; pointer-events: none; transform: translateX(-50%) translateY(6px); }
 /* 空会话欢迎提示：对话区无消息时居中显示 */
 .chat-empty {

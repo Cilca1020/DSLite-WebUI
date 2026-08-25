@@ -60,8 +60,8 @@
   /* ---- 消息操作条：按钮略小于桌面 34px，移动端更紧凑 ---- */
   .msg-action { width: 30px; height: 30px; }
 
-  /* ---- 置底按钮：移动端水平居中、尺寸略小 ---- */
-  .scroll-down-btn { bottom: 28px; width: 36px; height: 36px; }
+  /* ---- 置底按钮：移动端水平居中、尺寸略小，贴近输入框 ---- */
+  .scroll-down-btn { bottom: 6px; width: 36px; height: 36px; }
   .scroll-down-btn svg { width: 18px; height: 18px; }
 
   /* ---- 输入栏 ---- */
