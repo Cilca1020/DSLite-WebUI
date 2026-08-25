@@ -7,6 +7,7 @@
 # 0.0.0.0 允许局域网内其他设备（如手机）访问；仅本机访问可改回 127.0.0.1
 HOST = "0.0.0.0"
 PORT = 5000
+SECRET_KEY = "deepseek-webui-change-this-secret"
 
 # 支持的模型列表。每个模型包含：
 #   id        -> 实际传给 API 的 model 名

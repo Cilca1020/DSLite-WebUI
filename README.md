@@ -10,6 +10,7 @@
 - 多会话保存与历史记录
 - 参数预设模板
 - API Key 在网页端输入，存于浏览器 localStorage（后端不持久化 Key）
+- 账号登录与注册，登录时使用图形验证码
 
 ## 目录结构
 
@@ -17,7 +18,7 @@
 DeepSeek_WebUI/
 ├── app.py            # Flask 后端入口，注册所有接口
 ├── llm_client.py     # 调用大模型的封装（兼容 OpenAI 协议）
-├── storage.py        # 读写 data/ 下的 JSON 文件（会话、预设）
+├── storage.py        # SQLite 账号与会话存储，JSON 参数预设存储
 ├── config.py         # 配置（端口、默认模型、支持的模型列表）
 ├── static/           # 前端
 │   ├── index.html
@@ -30,7 +31,7 @@ DeepSeek_WebUI/
 │   ├── main.js       # 初始化入口
 │   ├── file_reader.js  # 文件读取模块
 │   └── vendor/       # 第三方库（marked 等）
-├── data/             # 运行时生成（会话/预设 JSON，已被 .gitignore 忽略）
+├── data/             # 运行时生成（app.db、旧版会话 JSON、预设，已被 .gitignore 忽略）
 └── requirements.txt
 ```
 
@@ -50,9 +51,11 @@ python app.py
 
 3. 浏览器打开 http://127.0.0.1:5000
 
-4. 在页面右上角填入你的 API Key（存于浏览器本地，不会发给除模型服务外的任何地方）。
+4. 首次打开页面先注册账号，之后使用账号、密码和图形验证码登录。
+5. 登录后在页面右上角填入你的 API Key（存于浏览器本地，不会发给除模型服务外的任何地方）。
 
 ## 说明
 
 - 后端仅作为代理转发，每次请求由前端携带 Key，后端不落盘保存 Key。
+- 账号和会话数据保存在 `data/app.db`，会话通过 `username` 外键绑定账号，密码以 PBKDF2 哈希保存；部署到生产环境时请设置 `DEEPSEEK_WEBUI_SECRET_KEY` 环境变量覆盖默认 Flask session 密钥。
 - 支持的模型在 `config.py` 中配置，默认包含 DeepSeek 与 OpenAI 兼容端点。

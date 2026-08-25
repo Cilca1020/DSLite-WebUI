@@ -6,6 +6,7 @@ const portraitMQ = window.matchMedia("(orientation: portrait)");
 const isMobileLayout = () => portraitMQ.matches;
 
 async function init() {
+  if (!(await initAuth())) return;
   // 竖屏（手机 / 竖持平板）：默认收起侧边栏，避免首次进入即遮挡对话区
   if (isMobileLayout()) {
     document.querySelector(".app").setAttribute("data-sidebar", "collapsed");

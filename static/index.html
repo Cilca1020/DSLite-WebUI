@@ -29,6 +29,21 @@
   </script>
 </head>
 <body>
+  <section id="authScreen" class="auth-screen hidden">
+    <div class="auth-card">
+      <div class="auth-mark">DS</div>
+      <h1>DeepSeek WebUI</h1>
+      <p id="authSubtitle">登录后继续使用</p>
+      <form id="authForm">
+        <label>账号<input id="authUsername" type="text" autocomplete="username" required minlength="3" maxlength="32" /></label>
+        <label>密码<input id="authPassword" type="password" autocomplete="current-password" required minlength="6" /></label>
+        <div class="captcha-row"><label>验证码<input id="authCaptcha" type="text" maxlength="5" autocomplete="off" required /></label><button id="captchaImageBtn" type="button" title="刷新验证码"><img id="captchaImage" alt="验证码" /></button></div>
+        <p id="authError" class="auth-error" role="alert"></p>
+        <button id="authSubmit" class="auth-submit" type="submit">登录</button>
+      </form>
+      <button id="authModeBtn" class="auth-mode" type="button">没有账号？注册</button>
+    </div>
+  </section>
   <div class="app" data-sidebar="open">
     <!-- 侧边栏：会话 + 预设 -->
     <aside class="sidebar">
@@ -51,6 +66,29 @@
         </button>
         <select id="modelSelect" class="model-select"></select>
         <div class="topbar-right">
+          <div class="account-menu">
+            <button id="accountBtn" class="icon-btn account-btn" type="button" title="账户菜单" aria-label="账户菜单" aria-expanded="false">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="7" r="4"/></svg>
+            </button>
+            <section id="accountCard" class="account-card hidden" aria-hidden="true">
+              <div class="account-card-head">
+                <div class="account-avatar" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c.8-3.2 3.2-5 7-5s6.2 1.8 7 5"/></svg></div>
+                <div><strong id="userBadge"></strong><span id="accountStatus">已登录</span></div>
+              </div>
+              <button id="changePasswordBtn" class="account-action" type="button">修改密码</button>
+              <form id="passwordForm" class="password-form hidden">
+                <label>当前密码<input id="currentPassword" type="password" autocomplete="current-password" required /></label>
+                <label>新密码<input id="newPassword" type="password" autocomplete="new-password" minlength="6" required /></label>
+                <label>确认新密码<input id="confirmPassword" type="password" autocomplete="new-password" minlength="6" required /></label>
+                <p id="passwordError" class="password-error" role="alert"></p>
+                <div class="password-actions">
+                  <button class="account-action" type="submit">确认修改</button>
+                  <button id="cancelPasswordBtn" class="account-action" type="button">取消</button>
+                </div>
+              </form>
+              <button id="logoutBtn" class="account-action account-logout" type="button">退出登录</button>
+            </section>
+          </div>
           <button id="themeBtn" class="icon-btn" title="切换深色/浅色"></button>
           <button id="openSettingsBtn" class="icon-btn" title="参数设置">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
@@ -186,6 +224,7 @@
   <script src="/static/render.js"></script>
   <script src="/static/sessions.js"></script>
   <script src="/static/chat.js"></script>
+  <script src="/static/auth.js"></script>
   <script src="/static/main.js"></script>
 </body>
 </html>

@@ -19,14 +19,107 @@
 """
 
 import json
+import hmac
+import os
+import random
+import secrets
+import string
 
-from flask import Flask, Response, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory, session
 
 import config
 import llm_client
 import storage
 
 app = Flask(__name__, static_folder="static")
+app.secret_key = os.environ.get("DEEPSEEK_WEBUI_SECRET_KEY", config.SECRET_KEY)
+
+
+@app.before_request
+def protect_api():
+    if request.path.startswith("/api/") and not request.path.startswith("/api/auth/") and "username" not in session:
+        return jsonify({"error": "请先登录"}), 401
+
+
+# ------------------------- 账号与验证码 -------------------------
+
+@app.route("/api/auth/me")
+def auth_me():
+    return jsonify({"authenticated": "username" in session, "username": session.get("username")})
+
+
+@app.route("/api/auth/captcha")
+def auth_captcha():
+    code = "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(5))
+    session["captcha"] = code
+    random.seed(code)
+    colors = ["#2563eb", "#dc2626", "#059669", "#7c3aed", "#d97706"]
+    lines = "".join(f'<path d="M{random.randint(0,170)} {random.randint(8,52)} L{random.randint(20,190)} {random.randint(8,52)}" stroke="{random.choice(colors)}"/>' for _ in range(5))
+    chars = "".join(f'<text x="{18 + i * 34}" y="39" transform="rotate({random.randint(-18,18)} {18 + i * 34} 30)" fill="{random.choice(colors)}">{char}</text>' for i, char in enumerate(code))
+    svg = f'<svg xmlns="http://www.w3.org/2000/svg" width="190" height="58"><rect width="190" height="58" rx="8" fill="#f3f4f6"/>{lines}<g font-family="Arial,sans-serif" font-size="27" font-weight="700">{chars}</g></svg>'
+    return Response(svg, mimetype="image/svg+xml")
+
+
+def _auth_form():
+    data = request.get_json(force=True, silent=True) or {}
+    username = str(data.get("username", "")).strip()
+    password = str(data.get("password", ""))
+    captcha = str(data.get("captcha", "")).strip().upper()
+    if not username or not password or not captcha:
+        return None, (jsonify({"error": "请填写完整信息"}), 400)
+    if len(username) < 3 or len(username) > 32 or not username.replace("_", "").isalnum():
+        return None, (jsonify({"error": "账号需为 3-32 位字母、数字或下划线"}), 400)
+    if not hmac.compare_digest(captcha, session.pop("captcha", "")):
+        return None, (jsonify({"error": "验证码错误或已过期"}), 400)
+    return (username, password), None
+
+
+@app.route("/api/auth/register", methods=["POST"])
+def auth_register():
+    values, error = _auth_form()
+    if error:
+        return error
+    username, password = values
+    if len(password) < 6:
+        return jsonify({"error": "密码至少 6 位"}), 400
+    if not storage.create_user(username, password):
+        return jsonify({"error": "账号已存在"}), 409
+    session["username"] = username
+    return jsonify({"authenticated": True, "username": username})
+
+
+@app.route("/api/auth/login", methods=["POST"])
+def auth_login():
+    values, error = _auth_form()
+    if error:
+        return error
+    username, password = values
+    if not storage.verify_user(username, password):
+        return jsonify({"error": "账号或密码错误"}), 401
+    session["username"] = username
+    return jsonify({"authenticated": True, "username": username})
+
+
+@app.route("/api/auth/logout", methods=["POST"])
+def auth_logout():
+    session.clear()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/auth/password", methods=["POST"])
+def auth_password():
+    if "username" not in session:
+        return jsonify({"error": "请先登录"}), 401
+    data = request.get_json(force=True, silent=True) or {}
+    current_password = str(data.get("current_password", ""))
+    new_password = str(data.get("new_password", ""))
+    if len(new_password) < 6:
+        return jsonify({"error": "新密码至少 6 位"}), 400
+    if current_password == new_password:
+        return jsonify({"error": "新密码不能与当前密码相同"}), 400
+    if not storage.change_password(session["username"], current_password, new_password):
+        return jsonify({"error": "当前密码错误"}), 400
+    return jsonify({"ok": True})
 
 
 # ------------------------- 静态页面 -------------------------
@@ -129,7 +222,7 @@ def api_chat():
 
 @app.route("/api/sessions")
 def api_list_sessions():
-    return jsonify(storage.list_sessions())
+    return jsonify(storage.list_sessions(session["username"]))
 
 
 @app.route("/api/sessions", methods=["POST"])
@@ -138,25 +231,26 @@ def api_create_session():
     title = data.get("title")
     model = data.get("model")
     params = data.get("params")
-    return jsonify(storage.create_session(title, model=model, params=params))
+    return jsonify(storage.create_session(session["username"], title, model=model, params=params))
 
 
 @app.route("/api/sessions/<sid>/config", methods=["POST"])
 def api_update_session_config(sid):
     data = request.get_json(force=True, silent=True) or {}
-    session = storage.update_session_config(
+    saved_session = storage.update_session_config(
+        session["username"],
         sid,
         model=data.get("model"),
         params=data.get("params"),
     )
-    if session is None:
+    if saved_session is None:
         return jsonify({"error": "会话不存在"}), 404
-    return jsonify(session)
+    return jsonify(saved_session)
 
 
 @app.route("/api/sessions/<sid>")
 def api_get_session(sid):
-    s = storage.get_session(sid)
+    s = storage.get_session(session["username"], sid)
     if s is None:
         return jsonify({"error": "会话不存在"}), 404
     return jsonify(s)
@@ -164,7 +258,7 @@ def api_get_session(sid):
 
 @app.route("/api/sessions/<sid>", methods=["DELETE"])
 def api_delete_session(sid):
-    storage.delete_session(sid)
+    storage.delete_session(session["username"], sid)
     return jsonify({"ok": True})
 
 
@@ -174,27 +268,27 @@ def api_rename_session(sid):
     title = data.get("title", "").strip()
     if not title:
         return jsonify({"error": "缺少 title"}), 400
-    session = storage.rename_session(sid, title)
-    if session is None:
+    saved_session = storage.rename_session(session["username"], sid, title)
+    if saved_session is None:
         return jsonify({"error": "会话不存在"}), 404
-    return jsonify(session)
+    return jsonify(saved_session)
 
 
 @app.route("/api/sessions/cleanup", methods=["POST"])
 def api_cleanup_sessions():
     # 删除空会话，可排除当前正在查看的那个
     exclude = (request.get_json(force=True, silent=True) or {}).get("exclude")
-    removed = storage.cleanup_empty_sessions(exclude_id=exclude)
+    removed = storage.cleanup_empty_sessions(session["username"], exclude_id=exclude)
     return jsonify({"removed": removed})
 
 
 @app.route("/api/sessions/<sid>/msg/<int:index>", methods=["DELETE"])
 def api_delete_msg(sid, index):
     """删除会话中指定下标的消息（从 0 开始，仅统计 user/assistant 消息，不含 system）。"""
-    session = storage.delete_message(sid, index)
-    if session is None:
+    saved_session = storage.delete_message(session["username"], sid, index)
+    if saved_session is None:
         return jsonify({"error": "会话不存在或下标越界"}), 404
-    return jsonify(session)
+    return jsonify(saved_session)
 
 
 @app.route("/api/sessions/<sid>/msg", methods=["POST"])
@@ -206,8 +300,8 @@ def api_append_msg(sid):
     files = data.get("files")
     if role not in ("user", "assistant"):
         return jsonify({"error": "role 必须为 user 或 assistant"}), 400
-    session = storage.append_message(sid, role, content, reasoning=reasoning, files=files)
-    return jsonify(session)
+    saved_session = storage.append_message(session["username"], sid, role, content, reasoning=reasoning, files=files)
+    return jsonify(saved_session)
 
 
 # ------------------------- 预设管理 -------------------------

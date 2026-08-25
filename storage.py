@@ -1,12 +1,11 @@
-"""JSON 文件存储：管理会话历史与参数预设。
+"""SQLite 数据存储：账号、会话与参数预设。"""
 
-所有数据存于 data/ 目录，零数据库依赖。
-- 会话：data/sessions/<session_id>.json
-- 预设：data/presets.json（一个文件存所有预设）
-"""
-
+import hashlib
+import hmac
 import json
 import os
+import secrets
+import sqlite3
 import time
 import uuid
 
@@ -15,205 +14,233 @@ import config
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 SESSIONS_DIR = os.path.join(DATA_DIR, "sessions")
 PRESETS_FILE = os.path.join(DATA_DIR, "presets.json")
+DB_FILE = os.path.join(DATA_DIR, "app.db")
 
 
 def _ensure_dirs():
-    os.makedirs(SESSIONS_DIR, exist_ok=True)
+    os.makedirs(DATA_DIR, exist_ok=True)
+
+
+def _connect():
+    _ensure_dirs()
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+def _init_db():
+    with _connect() as conn:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS users (
+                username TEXT PRIMARY KEY,
+                salt TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                created_at REAL NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS sessions (
+                id TEXT PRIMARY KEY,
+                username TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
+                title TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                model TEXT,
+                params TEXT,
+                messages TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_sessions_user_updated
+                ON sessions(username, updated_at DESC);
+        """)
+
+
+_init_db()
 
 
 def _new_id():
     return uuid.uuid4().hex
 
 
-# ------------------------- 会话管理 -------------------------
+def _hash_password(password, salt=None):
+    salt = salt or secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 120000)
+    return salt, digest.hex()
 
-def create_session(title=None, model=None, params=None):
-    """新建一个空会话，返回会话元信息。
 
-    model:  该会话使用的模型 id（每会话独立）
-    params: 该会话的推理参数（每会话独立）
-    """
-    _ensure_dirs()
-    sid = _new_id()
-    session = {
-        "id": sid,
-        "title": title or "会话 " + time.strftime("%m-%d %H:%M"),
-        "created_at": time.time(),
-        "model": model,
-        "params": params,
-        "messages": [],  # 每条: {role, content, ts}
-    }
-    save_session(session)
+def _migrate_legacy_sessions(username):
+    if not os.path.isdir(SESSIONS_DIR):
+        return
+    with _connect() as conn:
+        for name in os.listdir(SESSIONS_DIR):
+            if not name.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(SESSIONS_DIR, name), "r", encoding="utf-8") as f:
+                    session = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                continue
+            conn.execute(
+                """INSERT OR IGNORE INTO sessions
+                   (id, username, title, created_at, updated_at, model, params, messages)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (session["id"], username, session.get("title", "未命名"),
+                 session.get("created_at", time.time()),
+                 session.get("updated_at", session.get("created_at", time.time())),
+                 session.get("model"), json.dumps(session.get("params"), ensure_ascii=False),
+                 json.dumps(session.get("messages", []), ensure_ascii=False)),
+            )
+
+
+def create_user(username, password):
+    salt, password_hash = _hash_password(password)
+    try:
+        with _connect() as conn:
+            conn.execute(
+                "INSERT INTO users(username, salt, password_hash, created_at) VALUES (?, ?, ?, ?)",
+                (username, salt, password_hash, time.time()),
+            )
+    except sqlite3.IntegrityError:
+        return False
+    _migrate_legacy_sessions(username)
+    return True
+
+
+def verify_user(username, password):
+    with _connect() as conn:
+        user = conn.execute("SELECT salt, password_hash FROM users WHERE username = ?", (username,)).fetchone()
+    if not user:
+        return False
+    _, password_hash = _hash_password(password, user["salt"])
+    return hmac.compare_digest(password_hash, user["password_hash"])
+
+
+def change_password(username, current_password, new_password):
+    with _connect() as conn:
+        user = conn.execute("SELECT salt, password_hash FROM users WHERE username = ?", (username,)).fetchone()
+        if not user:
+            return False
+        _, current_hash = _hash_password(current_password, user["salt"])
+        if not hmac.compare_digest(current_hash, user["password_hash"]):
+            return False
+        salt, password_hash = _hash_password(new_password)
+        conn.execute("UPDATE users SET salt = ?, password_hash = ? WHERE username = ?", (salt, password_hash, username))
+    return True
+
+
+def _row_to_session(row):
+    return {"id": row["id"], "title": row["title"], "created_at": row["created_at"],
+            "updated_at": row["updated_at"], "model": row["model"],
+            "params": json.loads(row["params"]) if row["params"] else None,
+            "messages": json.loads(row["messages"])}
+
+
+def create_session(username, title=None, model=None, params=None):
+    now = time.time()
+    session = {"id": _new_id(), "title": title or "会话 " + time.strftime("%m-%d %H:%M"),
+               "created_at": now, "updated_at": now, "model": model, "params": params, "messages": []}
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO sessions(id, username, title, created_at, updated_at, model, params, messages) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (session["id"], username, session["title"], now, now, model,
+             json.dumps(params, ensure_ascii=False), json.dumps([])),
+        )
     return session
 
 
-def update_session_config(sid, model=None, params=None):
-    """更新会话的模型与推理参数（每个会话一套独立配置）。"""
-    session = get_session(sid)
+def get_session(username, sid):
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM sessions WHERE id = ? AND username = ?", (sid, username)).fetchone()
+    return _row_to_session(row) if row else None
+
+
+def _save_session(username, session):
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE sessions SET title = ?, updated_at = ?, model = ?, params = ?, messages = ? WHERE id = ? AND username = ?",
+            (session["title"], session.get("updated_at", time.time()), session.get("model"),
+             json.dumps(session.get("params"), ensure_ascii=False),
+             json.dumps(session.get("messages", []), ensure_ascii=False), session["id"], username),
+        )
+
+
+def update_session_config(username, sid, model=None, params=None):
+    session = get_session(username, sid)
     if session is None:
         return None
     if model is not None:
         session["model"] = model
     if params is not None:
         session["params"] = params
-    save_session(session)
+    _save_session(username, session)
     return session
 
 
-def save_session(session):
-    """覆盖保存一个会话对象。"""
-    _ensure_dirs()
-    path = os.path.join(SESSIONS_DIR, session["id"] + ".json")
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(session, f, ensure_ascii=False, indent=2)
+def list_sessions(username):
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id, title, model, created_at, updated_at, messages FROM sessions WHERE username = ? ORDER BY updated_at DESC",
+            (username,),
+        ).fetchall()
+    return [{"id": row["id"], "title": row["title"], "model": row["model"],
+             "created_at": row["created_at"], "updated_at": row["updated_at"],
+             "message_count": len(json.loads(row["messages"]))} for row in rows]
 
 
-def get_session(sid):
-    """读取单个会话，不存在返回 None。"""
-    path = os.path.join(SESSIONS_DIR, sid + ".json")
-    if not os.path.exists(path):
-        return None
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+def delete_session(username, sid):
+    with _connect() as conn:
+        conn.execute("DELETE FROM sessions WHERE id = ? AND username = ?", (sid, username))
 
 
-def list_sessions():
-    """列出所有会话元信息（不含完整消息），按最近互动时间倒序。"""
-    _ensure_dirs()
-    sessions = []
-    for name in os.listdir(SESSIONS_DIR):
-        if not name.endswith(".json"):
-            continue
-        with open(os.path.join(SESSIONS_DIR, name), "r", encoding="utf-8") as f:
-            s = json.load(f)
-        created = s.get("created_at", 0)
-        # 最近互动时间：有更新则用 updated_at，否则用创建时间
-        updated = s.get("updated_at", created)
-        sessions.append({
-            "id": s["id"],
-            "title": s.get("title", "未命名"),
-            "model": s.get("model"),
-            "created_at": created,
-            "updated_at": updated,
-            "message_count": len(s.get("messages", [])),
-        })
-    sessions.sort(key=lambda x: x["updated_at"], reverse=True)
-    return sessions
-
-
-def delete_session(sid):
-    """删除会话文件。"""
-    path = os.path.join(SESSIONS_DIR, sid + ".json")
-    if os.path.exists(path):
-        os.remove(path)
-
-
-def rename_session(sid, title):
-    """修改会话标题。"""
-    session = get_session(sid)
+def rename_session(username, sid, title):
+    session = get_session(username, sid)
     if session is None:
         return None
     session["title"] = title
-    save_session(session)
+    _save_session(username, session)
     return session
 
 
 def _is_user_configured(session):
-    """判断会话是否被用户改过推理参数（不同于默认值）。
-
-    模型选择不参与该判断：空会话的自动清理只取决于是否有消息，
-    与用户选了哪个模型（如切换 chat -> reasoner）无关。
-    保留参数判断是为了避免误删“调好了参数但还没发消息”的会话。
-    """
     params = session.get("params") or {}
-    for key, default_val in config.DEFAULT_PARAMS.items():
-        if params.get(key) != default_val:
-            return True
-    return False
+    return any(params.get(key) != default for key, default in config.DEFAULT_PARAMS.items())
 
 
-def cleanup_empty_sessions(exclude_id=None):
-    """删除所有空会话（无消息），可排除某个 id（如当前正在查看的）。
-
-    空会话的判定只看是否有消息，与模型选择无关：切换过模型
-    但还没发消息的会话同样会被清理；仅保留“改过推理参数
-    但还没发消息”的会话，避免误删用户配好的会话。
-
-    返回被删除的会话 id 列表。
-    """
-    _ensure_dirs()
+def cleanup_empty_sessions(username, exclude_id=None):
     removed = []
-    for name in os.listdir(SESSIONS_DIR):
-        if not name.endswith(".json"):
-            continue
-        sid = name[: -len(".json")]
-        if sid == exclude_id:
-            continue
-        path = os.path.join(SESSIONS_DIR, name)
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                s = json.load(f)
-        except (json.JSONDecodeError, OSError):
-            continue
-        if len(s.get("messages", [])) == 0 and not _is_user_configured(s):
-            os.remove(path)
-            removed.append(sid)
+    with _connect() as conn:
+        rows = conn.execute("SELECT * FROM sessions WHERE username = ?", (username,)).fetchall()
+        for row in rows:
+            session = _row_to_session(row)
+            if session["id"] != exclude_id and not session["messages"] and not _is_user_configured(session):
+                conn.execute("DELETE FROM sessions WHERE id = ? AND username = ?", (session["id"], username))
+                removed.append(session["id"])
     return removed
 
 
-def delete_message(sid, index):
-    """删除会话中第 index 条消息（不含 system）。
-
-    index 针对 messages 数组中 role 不为 system 的顺序下标。
-    返回更新后的会话对象；下标越界或会话不存在返回 None。
-    """
-    session = get_session(sid)
+def delete_message(username, sid, index):
+    session = get_session(username, sid)
     if session is None:
         return None
-    msgs = session.get("messages", [])
-    # 计算 user/assistant 消息在数组中的真实位置
-    chat_indices = [i for i, m in enumerate(msgs) if m.get("role") != "system"]
-    if index < 0 or index >= len(chat_indices):
+    indices = [i for i, message in enumerate(session["messages"]) if message.get("role") != "system"]
+    if index < 0 or index >= len(indices):
         return None
-    real_idx = chat_indices[index]
-    del msgs[real_idx]
+    del session["messages"][indices[index]]
     session["updated_at"] = time.time()
-    save_session(session)
+    _save_session(username, session)
     return session
 
 
-def append_message(sid, role, content, reasoning=None, files=None):
-    """向指定会话追加一条消息。
-
-    reasoning: 仅用于渲染（如思考过程），不参与模型上下文；
-               content 始终为纯回答文本，同时用于渲染与上传。
-    files:     可选，user 消息携带的本地文件列表，每项 {name, content}；
-               仅用于渲染与模型上下文拼接，不参与对话 role 计数。
-    每次追加会刷新 updated_at（用于按最近互动排序）。
-    """
-    session = get_session(sid)
-    if session is None:
-        session = create_session()
-    msg = {
-        "role": role,
-        "content": content,
-        "ts": time.time(),
-    }
+def append_message(username, sid, role, content, reasoning=None, files=None):
+    session = get_session(username, sid) or create_session(username)
+    message = {"role": role, "content": content, "ts": time.time()}
     if reasoning is not None:
-        msg["reasoning"] = reasoning
+        message["reasoning"] = reasoning
     if files is not None:
-        # 仅保留必要字段，避免存储冗余信息
-        msg["files"] = [
-            {"name": f.get("name", ""), "content": f.get("content", "")}
-            for f in files
-        ]
-    session.setdefault("messages", []).append(msg)
+        message["files"] = [{"name": f.get("name", ""), "content": f.get("content", "")} for f in files]
+    session["messages"].append(message)
     session["updated_at"] = time.time()
-    save_session(session)
+    _save_session(username, session)
     return session
 
-
-# ------------------------- 预设管理 -------------------------
 
 def _read_presets():
     if not os.path.exists(PRESETS_FILE):
@@ -233,13 +260,12 @@ def list_presets():
 
 
 def save_preset(name, params):
-    """新增或覆盖一个参数预设。"""
     presets = _read_presets()
-    for p in presets:
-        if p["name"] == name:
-            p["params"] = params
+    for preset in presets:
+        if preset["name"] == name:
+            preset["params"] = params
             _write_presets(presets)
-            return p
+            return preset
     preset = {"name": name, "params": params}
     presets.append(preset)
     _write_presets(presets)
@@ -247,6 +273,4 @@ def save_preset(name, params):
 
 
 def delete_preset(name):
-    presets = _read_presets()
-    presets = [p for p in presets if p["name"] != name]
-    _write_presets(presets)
+    _write_presets([preset for preset in _read_presets() if preset["name"] != name])
