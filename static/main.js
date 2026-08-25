@@ -11,8 +11,10 @@ async function init() {
   if (isMobileLayout()) {
     document.querySelector(".app").setAttribute("data-sidebar", "collapsed");
   }
-  // 模型列表
-  const models = await apiGet("/api/models");
+  // 模型列表（隐藏 GPT 选项；历史会话中已是 GPT 的模型仍可正常打开）
+  const allModels = await apiGet("/api/models");
+  let models = allModels.filter((m) => !m.id.toLowerCase().includes("gpt"));
+  if (!models.length) models = allModels; // 兜底：万一全被过滤则回退全部
   const sel = $("#modelSelect");
   models.forEach((m) => {
     const o = document.createElement("option");
@@ -262,7 +264,16 @@ async function init() {
   });
 
   // 刷新侧栏
-  refreshSessions();
+  const sessions = await apiGet("/api/sessions");
+  await refreshSessions();
+  // 标题总结放到后台执行，避免模型调用期间阻塞会话面板。
+  Promise.all(
+    sessions
+      .filter((item) => item.title.startsWith("会话 ") && item.message_count >= 2)
+      .map((item) => autoTitleSession(item.id).catch(() => false))
+  ).then((results) => {
+    if (results.some(Boolean)) refreshSessions();
+  });
   // 启动不自动创建会话：直接进入「未选中对话」空白态显示「你好」提示，
   // 等用户改参数/prompt 或发消息再创建
   resetChatUI();

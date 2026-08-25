@@ -22,6 +22,7 @@ import json
 import hmac
 import os
 import random
+import re
 import secrets
 import string
 
@@ -302,6 +303,66 @@ def api_append_msg(sid):
         return jsonify({"error": "role 必须为 user 或 assistant"}), 400
     saved_session = storage.append_message(session["username"], sid, role, content, reasoning=reasoning, files=files)
     return jsonify(saved_session)
+
+
+# 默认标题格式：create_session 生成的 "会话 MM-DD HH:MM"
+_DEFAULT_TITLE_RE = re.compile(r"^会话 \d{2}-\d{2} \d{2}:\d{2}$")
+
+
+def _is_default_title(title):
+    return bool(_DEFAULT_TITLE_RE.match(title or ""))
+
+
+@app.route("/api/sessions/<sid>/auto-title", methods=["POST"])
+def api_auto_title(sid):
+    data = request.get_json(force=True, silent=True) or {}
+    api_key = str(data.get("api_key", "")).strip()
+    system_prompt = data.get("system_prompt", config.DEFAULT_PARAMS["system_prompt"])
+    current_user = session["username"]
+    title_status = storage.auto_title_status(current_user, sid)
+    if title_status is None:
+        return jsonify({"error": "会话不存在"}), 404
+    # 已生成且标题非默认格式：直接返回。
+    # generated=1 但标题仍是默认格式，说明标题曾被并发写覆盖（历史脏数据），
+    # 不直接返回，继续走下面的生成流程实现自愈。
+    if title_status["generated"] and not _is_default_title(title_status["title"]):
+        return jsonify({"title": title_status["title"]})
+    saved_session = storage.get_session(current_user, sid)
+    if not api_key or not saved_session:
+        return jsonify({"error": "参数不完整或会话不存在"}), 400
+    # 标题生成固定使用轻量 chat 模型，不跟随 UI 选中模型，
+    # 避免 reasoner 因 token 预算输不出正文、OpenAI 模型等导致的生成失败
+    model = config.AUTO_TITLE_MODEL
+    messages = [m for m in saved_session["messages"] if m.get("role") in ("user", "assistant")]
+    if len(messages) < 2 or messages[0]["role"] != "user" or messages[1]["role"] != "assistant":
+        return jsonify({"error": "首轮对话尚未完成"}), 400
+    prompt = (
+        "请根据系统提示词和下面的第一轮问答，为这个会话生成一个简洁标题。"
+        "只返回标题文字，不要引号、标点或解释，最多10个字。\n"
+        f"用户：{messages[0].get('content', '')}\n助手：{messages[1].get('content', '')}"
+    )
+    try:
+        title = llm_client.chat(
+            api_key=api_key,
+            model=model,
+            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}],
+            temperature=0.2,
+            top_p=1.0,
+            # 推理模型（reasoner）的思考过程也计入 max_tokens，32 容易输不出正文
+            max_tokens=1024,
+            stream=False,
+        )
+    except (RuntimeError, ValueError, KeyError, IndexError):
+        return jsonify({"error": "标题生成失败"}), 502
+    title = "".join(str(title or "").replace("\n", " ").split()).strip(" \"'`。，、：:；;！!？?《》[]()（）")[:10]
+    if not title:
+        return jsonify({"error": "标题为空"}), 502
+    updated = storage.set_auto_title(current_user, sid, title)
+    if updated is None:
+        # 并发下已被其他请求生成：返回最新标题
+        latest = storage.auto_title_status(current_user, sid)
+        return jsonify({"title": latest["title"] if latest else title})
+    return jsonify(updated)
 
 
 # ------------------------- 预设管理 -------------------------

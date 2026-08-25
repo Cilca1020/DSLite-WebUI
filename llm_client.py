@@ -69,36 +69,50 @@ def chat(
         payload["stop"] = stop
 
     if not stream:
-        resp = requests.post(url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT)
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT)
+        except requests.RequestException as e:
+            raise RuntimeError(f"网络错误: {e}") from e
         if resp.status_code != 200:
             raise RuntimeError(f"API 错误 {resp.status_code}: {resp.text}")
         data = resp.json()
         return data["choices"][0]["message"]["content"]
 
+    return _stream_response(url, headers, payload)
+
+
+def _stream_response(url, headers, payload):
+    """流式读取 SSE 响应，避免影响非流式调用的返回类型。"""
     # 流式：用流式读取，逐行解析 SSE
-    resp = requests.post(url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT, stream=True)
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT, stream=True)
+    except requests.RequestException as e:
+        raise RuntimeError(f"网络错误: {e}") from e
     if resp.status_code != 200:
         raise RuntimeError(f"API 错误 {resp.status_code}: {resp.text}")
 
-    for line in resp.iter_lines(decode_unicode=True):
-        if not line:
-            continue
-        line = line.strip()
-        if not line.startswith("data:"):
-            continue
-        data_str = line[len("data:"):].strip()
-        if data_str == "[DONE]":
-            break
-        try:
-            chunk = json.loads(data_str)
-        except json.JSONDecodeError:
-            continue
-        delta = chunk.get("choices", [{}])[0].get("delta", {})
-        # 推理过程（DeepSeek Reasoner 等通过 reasoning_content 提供）
-        reasoning = delta.get("reasoning_content")
-        if reasoning:
-            yield "<<REASONING>>" + reasoning
-        # 正式回答内容
-        piece = delta.get("content")
-        if piece:
-            yield "<<ANSWER>>" + piece
+    try:
+        for line in resp.iter_lines(decode_unicode=True):
+            if not line:
+                continue
+            line = line.strip()
+            if not line.startswith("data:"):
+                continue
+            data_str = line[len("data:"):].strip()
+            if data_str == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data_str)
+            except json.JSONDecodeError:
+                continue
+            delta = chunk.get("choices", [{}])[0].get("delta", {})
+            # 推理过程（DeepSeek Reasoner 等通过 reasoning_content 提供）
+            reasoning = delta.get("reasoning_content")
+            if reasoning:
+                yield "<<REASONING>>" + reasoning
+            # 正式回答内容
+            piece = delta.get("content")
+            if piece:
+                yield "<<ANSWER>>" + piece
+    except requests.RequestException as e:
+        raise RuntimeError(f"网络错误: {e}") from e

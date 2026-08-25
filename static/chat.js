@@ -228,7 +228,6 @@ async function streamAssistant(userText, assistantEl, saveHistory, writeUser = t
     buffer = "";
   }
   hideLoading(); // 流结束兜底移除加载动画（即使未收到任何内容块）
-  showActions(); // 流式输出结束后再显示操作条
   // 收尾：把剩余草稿也定型渲染，移除纯文本草稿节点（不整段重渲染，已定型块不动）
   flushRendered(full.length);
   if (draftAttached) {
@@ -239,6 +238,22 @@ async function streamAssistant(userText, assistantEl, saveHistory, writeUser = t
   if (reasoning && reasoningBody) renderMarkdown(reasoningBody, reasoning);
   // 流式结束后保存原始 markdown 源，供"复制为 Markdown"使用
   assistantEl._rawText = full;
+  // 所有收尾渲染完成后再显示操作条并滚动到底：
+  // 若先滚动，之后定型渲染追加的块级元素（代码/表格等）会撑高内容，底部留白
+  showActions();
+  // 图片等异步资源加载完成后高度还会变化，再滚动一次兜底
+  const scrollToBottom = () => {
+    $("#chatBox").scrollTop = $("#chatBox").scrollHeight;
+  };
+  requestAnimationFrame(() => {
+    scrollToBottom();
+    setTimeout(scrollToBottom, 300); // 图片未加载完时兜底
+  });
+  answerDiv.querySelectorAll("img").forEach((img) => {
+    if (!img.complete) {
+      img.addEventListener("load", scrollToBottom, { once: true });
+    }
+  });
   // 存历史：content 存纯回答（用于渲染+上传），reasoning 单独存（仅渲染）
   if (saveHistory && currentSessionId) {
     if (writeUser)
@@ -252,9 +267,38 @@ async function streamAssistant(userText, assistantEl, saveHistory, writeUser = t
       content: full,
       reasoning: reasoning || undefined,
     });
+    // 首轮问答完成后自动生成一次会话标题；失败不影响当前对话。
+    if (writeUser) {
+      autoTitleSession(currentSessionId, 2).then((updated) => {
+        if (updated) refreshSessions();
+      }).catch(() => {});
+    }
     refreshSessions();
   }
   return { full, reasoning };
+}
+
+// 为已有首轮问答且仍使用默认标题的会话补生成标题。
+// 后端固定用轻量 chat 模型生成标题，不依赖当前 UI 选中的模型。
+async function autoTitleSession(sessionId, retries = 0) {
+  const apiKey = loadApiKey();
+  if (!apiKey || !sessionId) return false;
+  let result = null;
+  try {
+    result = await apiPost("/api/sessions/" + sessionId + "/auto-title", {
+      api_key: apiKey,
+      system_prompt: readParamsFromUI().system_prompt,
+    });
+  } catch (_) {
+    // 网络错误 / 非 JSON 响应（如后端 500 HTML）也进入重试，而非直接放弃
+    result = null;
+  }
+  if (result && result.title) return true;
+  if (retries > 0) {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    return autoTitleSession(sessionId, retries - 1);
+  }
+  return false;
 }
 
 // 编辑最新一轮的提问：取出原文本填入输入框，并删除该轮（user+assistant）。

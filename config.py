@@ -9,6 +9,9 @@ HOST = "0.0.0.0"
 PORT = 5000
 SECRET_KEY = "deepseek-webui-change-this-secret"
 
+# 自动生成会话标题使用的固定模型（不跟随 UI 选择，保证标题生成轻量稳定）
+AUTO_TITLE_MODEL = "deepseek-chat"
+
 # 支持的模型列表。每个模型包含：
 #   id        -> 实际传给 API 的 model 名
 #   label     -> 前端展示名
