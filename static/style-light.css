@@ -194,6 +194,8 @@ body {
 }
 
 .mini-btn {
+  display: inline-flex;
+  align-items: center;
   padding: 6px 10px;
   border: 1px solid var(--input-border);
   background: var(--btn-bg);
@@ -201,8 +203,11 @@ body {
   border-radius: 6px;
   font-size: 12px;
   cursor: pointer;
+  text-decoration: none;
 }
 .mini-btn:hover { background: var(--btn-hover); }
+.mini-btn svg { width: 14px; height: 14px; }
+.mini-btn span { margin-left: 4px; }
 
 /* 设置面板：右侧抽屉 + 遮罩（平滑滑入滑出） */
 .settings-overlay {
@@ -289,6 +294,15 @@ body {
 .settings-group textarea { resize: vertical; }
 .settings-group > textarea { width: 100%; margin-bottom: 12px; }
 .apikey-input { width: 100%; }
+.key-buttons { display: flex; align-items: center; gap: 8px; }
+.key-buttons .mini-btn {
+  flex: 1;
+  justify-content: center;
+  height: 30px;
+  line-height: 1;
+  font-family: inherit;
+  white-space: nowrap;
+}
 
 /* 通用参数行：标签 + 输入框 + 说明 */
 .param-field { margin-bottom: 14px; }
