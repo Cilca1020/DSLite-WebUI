@@ -175,7 +175,10 @@ async function newSession() {
 }
 
 // 打开会话：载入会话配置与历史消息并渲染
-async function openSession(id) {
+// opts.suppressLatestMarkers=true 时跳过「最新一轮」标记的重新计算（保持 null）。
+// 用于编辑流程：删除最后一条后，倒数第二条会变成最后一条，若重新标记，
+// 用户尚未发送修改内容时该条也会误显「编辑/重试」按钮。
+async function openSession(id, opts = {}) {
   const s = await apiGet("/api/sessions/" + id);
   currentSessionId = id;
   // 载入该会话独立的 model + 推理参数
@@ -190,13 +193,15 @@ async function openSession(id) {
   lastUserMsgIndex = null;
   lastAssistantMsgIndex = null;
   let mIdxPre = 0;
-  s.messages
-    .filter((m) => m.role !== "system")
-    .forEach((m) => {
-      if (m.role === "user") lastUserMsgIndex = mIdxPre;
-      if (m.role === "assistant") lastAssistantMsgIndex = mIdxPre;
-      mIdxPre++;
-    });
+  if (!opts.suppressLatestMarkers) {
+    s.messages
+      .filter((m) => m.role !== "system")
+      .forEach((m) => {
+        if (m.role === "user") lastUserMsgIndex = mIdxPre;
+        if (m.role === "assistant") lastAssistantMsgIndex = mIdxPre;
+        mIdxPre++;
+      });
+  }
   let mIdx = 0; // 仅统计 user/assistant 的下标，与后端 delete_message 对齐
   s.messages
     .filter((m) => m.role !== "system")

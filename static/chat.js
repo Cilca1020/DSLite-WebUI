@@ -174,7 +174,15 @@ async function streamAssistant(userText, assistantEl, saveHistory, writeUser = t
       ensureReasoning();
       reasoningBody.textContent = reasoning; // 流式实时显示纯文本
     } else {
-      if (reasoning && reasoningWrap && reasoningWrap.open) reasoningWrap.open = false;
+      // 思考过程是否随正文输出自动收起由设置决定（默认收起；关闭设置后保持展开）
+      if (
+        reasoning &&
+        reasoningWrap &&
+        reasoningWrap.open &&
+        window.getAutoCollapseReasoning()
+      ) {
+        reasoningWrap.open = false;
+      }
       full += text;
       renderAnswer(); // 增量渲染：实时成型，已定型块不重绘
     }
@@ -265,7 +273,10 @@ async function editMessage(index) {
   await apiDelete("/api/sessions/" + currentSessionId + "/msg/" + hi);
   if (second !== -1) await apiDelete("/api/sessions/" + currentSessionId + "/msg/" + lo);
   lastUserMsgIndex = null; // 该轮即将被删除，临时清空
-  await openSession(currentSessionId);
+  // 抑制「最新一轮」标记重新计算：删除最后一条后倒数第二条会成为最后一条，
+  // 若被重新标记，用户尚未发送修改内容时它也会误显「编辑」按钮，导致连续误改。
+  // 待用户在输入框完成编辑并发送新消息后，sendMessage 会重新设置标记。
+  await openSession(currentSessionId, { suppressLatestMarkers: true });
   // 预填输入框，并把原文件恢复回待发送队列（用户可保留或重新选择）
   const input = $("#userInput");
   input.value = original;
@@ -366,6 +377,12 @@ async function sendMessage() {
 
   // 发送消息即正式创建对话（未选中会话时在此创建，并出现在侧栏）
   await ensureSession();
+
+  // 新消息是追加到 DOM 而非重渲染，旧消息上的「编辑/重试」按钮不会自动消失，
+  // 会导致倒数第二条也残留按钮。先清掉所有旧按钮，再更新标记并渲染新消息。
+  document
+    .querySelectorAll(".msg-actions .edit-btn, .msg-actions .retry-btn")
+    .forEach((b) => b.remove());
 
   // 渲染用户消息（传入下标，使操作条可见）；携带文件时在气泡上方渲染文件卡片
   // 用户消息强制纯文本：输入中若含 Markdown 语法则按原样显示，不渲染

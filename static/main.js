@@ -76,6 +76,17 @@ async function init() {
     msgFontInput.value = px; // 写回钳制后的合法值
     localStorage.setItem(MSG_FONT_KEY, px);
   });
+
+  // 思考过程是否自动收起（localStorage 持久化；默认开启，保持原行为）
+  const AUTO_COLLAPSE_KEY = "dsw_auto_collapse_reasoning";
+  const getAutoCollapse = () => localStorage.getItem(AUTO_COLLAPSE_KEY) !== "0";
+  window.getAutoCollapseReasoning = getAutoCollapse; // 供 chat.js 流式输出时判断
+  const autoCollapseInput = $("#autoCollapseReasoning");
+  autoCollapseInput.checked = getAutoCollapse();
+  autoCollapseInput.addEventListener("change", () => {
+    localStorage.setItem(AUTO_COLLAPSE_KEY, autoCollapseInput.checked ? "1" : "0");
+  });
+
   $("#clearKeyBtn").onclick = () => {
     saveApiKey("");
     $("#apiKeyInput").value = "";

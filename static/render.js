@@ -150,7 +150,7 @@ function addMsgEl(role, text, markdown = true, msgIndex = null, files = null) {
     // 编辑按钮：仅最新一轮的 user 消息显示
     if (role === "user" && msgIndex === lastUserMsgIndex) {
       const editBtn = document.createElement("button");
-      editBtn.className = "msg-action";
+      editBtn.className = "msg-action edit-btn";
       editBtn.title = "编辑这条提问";
       editBtn.innerHTML = svgIcon("edit");
       editBtn.onclick = (e) => {
