@@ -174,12 +174,12 @@ def set_auto_title(username, sid, title):
     if not title:
         return None
     with _connect() as conn:
-        # 附加 OR 默认标题格式条件：历史脏数据（标志位已置 1 但标题被并发写覆盖回
-        # 默认格式）允许被再次生成覆盖，实现自愈。LIKE 中 _ 匹配单个任意字符。
+        # 只允许覆盖仍为默认格式的标题：用户已手动命名（非默认格式）的会话即使
+        # 标志为 0 也不会被覆盖；默认格式标题（含历史脏数据）允许生成覆盖实现自愈。
+        # LIKE 中 _ 匹配单个任意字符。
         cursor = conn.execute(
             """UPDATE sessions SET title = ?, auto_title_generated = 1
-               WHERE id = ? AND username = ?
-                 AND (auto_title_generated = 0 OR title LIKE '会话 __-__ __:__')""",
+               WHERE id = ? AND username = ? AND title LIKE '会话 __-__ __:__'""",
             (title, sid, username),
         )
         if cursor.rowcount != 1:

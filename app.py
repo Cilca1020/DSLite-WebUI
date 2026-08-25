@@ -322,10 +322,11 @@ def api_auto_title(sid):
     title_status = storage.auto_title_status(current_user, sid)
     if title_status is None:
         return jsonify({"error": "会话不存在"}), 404
-    # 已生成且标题非默认格式：直接返回。
-    # generated=1 但标题仍是默认格式，说明标题曾被并发写覆盖（历史脏数据），
-    # 不直接返回，继续走下面的生成流程实现自愈。
-    if title_status["generated"] and not _is_default_title(title_status["title"]):
+    # 以标题是否仍为默认格式作为唯一判据：非默认标题（用户已手动命名或已自动生成过）
+    # 一律直接返回，不重新生成，防止覆盖自定义标题（不依赖 auto_title_generated 标志，
+    # 避免旧数据中标志为 0 的手动命名会话被误覆盖）。
+    # generated=1 但标题仍是默认格式（历史脏数据）时继续生成实现自愈。
+    if not _is_default_title(title_status["title"]):
         return jsonify({"title": title_status["title"]})
     saved_session = storage.get_session(current_user, sid)
     if not api_key or not saved_session:
