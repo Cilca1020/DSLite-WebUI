@@ -361,6 +361,25 @@ async function retryFrom(msgIndex) {
   }
 }
 
+// 发送后优雅收起虚拟键盘：
+// 1) blur 让输入框失焦（iOS Safari 点击自定义按钮不会自动收起键盘，需显式 blur）
+// 2) 键盘收起会改变视口高度，等待系统收起动画结束后再把聊天区平滑滚到底部，
+//    避免 Android 上收起瞬间内容跳动突兀。编辑模式（editMessage）不调用此函数，
+//    因为预填原文后需要保持键盘打开让用户继续编辑。
+function dismissKeyboard() {
+  const input = $("#userInput");
+  if (document.activeElement !== input) return;
+  input.blur();
+  const chatBox = $("#chatBox");
+  setTimeout(() => {
+    if (chatBox.scrollTo) {
+      chatBox.scrollTo({ top: chatBox.scrollHeight, behavior: "smooth" });
+    } else {
+      chatBox.scrollTop = chatBox.scrollHeight;
+    }
+  }, 320);
+}
+
 // 发送消息：渲染用户消息与助手占位，触发流式请求
 async function sendMessage() {
   const input = $("#userInput");
@@ -390,6 +409,7 @@ async function sendMessage() {
   lastUserMsgIndex = userIdx; // 最新一轮，显示编辑按钮（渲染前先设置）
   addMsgEl("user", text || "（已发送文件）", false, userIdx, files);
   input.value = "";
+  dismissKeyboard(); // 移动端发送后自动收起虚拟键盘
   conversation.push({ role: "user", content: text, files: files.length ? files : null });
 
   // 发送后立即清空输入框上方的待发送文件卡片（不等输出完成）

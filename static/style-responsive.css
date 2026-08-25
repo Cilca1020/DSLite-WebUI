@@ -66,6 +66,12 @@
 
   /* ---- 输入栏 ---- */
   .input-bar { padding: 7px 10px; }
+  /* 移动端键盘无 Shift 键，显示「换行」按钮替代 Shift+Enter；
+     与「添加文件」同行并推至右侧（margin-left:auto），
+     文件卡片强制换到下一行（order + width:100%），避免按钮与卡片重叠 */
+  .newline-btn { display: inline-flex; margin-left: auto; }
+  .file-chips { order: 1; width: 100%; }
+  .file-chips:empty { display: none; }
   /* iOS Safari 聚焦缩放规避：输入框字号 ≥16px（聚焦缩放的判断依据是输入框 font-size，
      与 placeholder 无关），placeholder 单独缩小并淡化 */
   .user-input { font-size: 14px; padding: 8px 10px; }

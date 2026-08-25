@@ -205,6 +205,20 @@ async function init() {
       sendMessage();
     }
   });
+  // 移动端键盘无 Shift 键，「换行」按钮在光标处插入换行，替代 Shift+Enter
+  $("#newlineBtn").onclick = () => {
+    const input = $("#userInput");
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? start;
+    input.value = input.value.slice(0, start) + "\n" + input.value.slice(end);
+    const next = start + 1;
+    input.setSelectionRange(next, next);
+    input.focus();
+  };
+  // 移动端 placeholder 提示改用「换行」按钮
+  if (isMobileLayout()) {
+    $("#userInput").placeholder = "输入消息，Enter 发送，「换行」按钮换行";
+  }
   // 粘贴降级为纯文本：丢弃 HTML 富文本格式，仅保留纯文本
   $("#userInput").addEventListener("paste", (e) => {
     e.preventDefault();

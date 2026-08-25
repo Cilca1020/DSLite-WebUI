@@ -745,6 +745,23 @@ html.theme-transition *::after {
 }
 .attach-btn:hover { background: var(--hover); color: var(--text); border-color: var(--accent); }
 .attach-btn svg { width: 16px; height: 16px; display: block; }
+/* 「换行」按钮：移动端键盘无 Shift 键，用可见按钮替代 Shift+Enter；桌面端隐藏 */
+.newline-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--input-border);
+  background: var(--field-bg);
+  color: var(--text-dim);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.newline-btn:hover { background: var(--hover); color: var(--text); border-color: var(--accent); }
+.newline-btn svg { width: 16px; height: 16px; display: block; }
 /* 已选文件卡片（输入框上方的小标签） */
 .file-chips {
   display: flex;
