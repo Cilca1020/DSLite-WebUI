@@ -157,13 +157,10 @@ def get_session(username, sid):
 
 
 def _save_session(username, session):
-    # 不更新 title 列：标题只由 create/rename/set_auto_title 修改。
-    # 否则 append_message 等 read-modify-write 操作与 auto-title 并发时，
-    # 会用读到的旧标题覆盖刚生成的标题（而 auto_title_generated 已置 1，不再重新生成）。
     with _connect() as conn:
         conn.execute(
-            "UPDATE sessions SET updated_at = ?, model = ?, params = ?, messages = ? WHERE id = ? AND username = ?",
-            (session.get("updated_at", time.time()), session.get("model"),
+            "UPDATE sessions SET title = ?, updated_at = ?, model = ?, params = ?, messages = ? WHERE id = ? AND username = ?",
+            (session["title"], session.get("updated_at", time.time()), session.get("model"),
              json.dumps(session.get("params"), ensure_ascii=False),
              json.dumps(session.get("messages", []), ensure_ascii=False), session["id"], username),
         )
@@ -174,12 +171,8 @@ def set_auto_title(username, sid, title):
     if not title:
         return None
     with _connect() as conn:
-        # 只允许覆盖仍为默认格式的标题：用户已手动命名（非默认格式）的会话即使
-        # 标志为 0 也不会被覆盖；默认格式标题（含历史脏数据）允许生成覆盖实现自愈。
-        # LIKE 中 _ 匹配单个任意字符。
         cursor = conn.execute(
-            """UPDATE sessions SET title = ?, auto_title_generated = 1
-               WHERE id = ? AND username = ? AND title LIKE '会话 __-__ __:__'""",
+            "UPDATE sessions SET title = ?, auto_title_generated = 1 WHERE id = ? AND username = ? AND auto_title_generated = 0",
             (title, sid, username),
         )
         if cursor.rowcount != 1:
@@ -230,13 +223,8 @@ def rename_session(username, sid, title):
     session = get_session(username, sid)
     if session is None:
         return None
-    # 手动重命名同时置 auto_title_generated = 1，防止后续对话的自动标题覆盖手动标题
-    with _connect() as conn:
-        conn.execute(
-            "UPDATE sessions SET title = ?, auto_title_generated = 1 WHERE id = ? AND username = ?",
-            (title, sid, username),
-        )
     session["title"] = title
+    _save_session(username, session)
     return session
 
 
