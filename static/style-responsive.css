@@ -22,6 +22,11 @@
     z-index: 30;
     box-shadow: 4px 0 16px rgba(0, 0, 0, 0.18);
     transition: transform 0.28s ease, opacity 0.2s ease;
+    /* 默认收起：HTML 无 data-sidebar 属性时即为此态。
+       避免 JS 启动后才收起导致的"首帧闪现"，首帧即为收起状态 */
+    transform: translateX(-100%);
+    opacity: 0;
+    pointer-events: none;
   }
   .app[data-sidebar="open"] .sidebar {
     transform: translateX(0);
