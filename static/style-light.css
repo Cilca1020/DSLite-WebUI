@@ -223,6 +223,17 @@ body {
 }
 .icon-btn:hover { background: var(--btn-hover); }
 .icon-btn svg { width: 16px; height: 16px; }
+/* 侧栏"新建会话"按钮：由正方形图标按钮改为长方形（图标 + 文字） */
+.new-session-btn {
+  width: auto;
+  height: 32px;
+  padding: 0 12px;
+  gap: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  white-space: nowrap;
+}
+.new-session-btn svg { flex: none; }
 /* 太阳图标（填充式）在 16px 下视觉偏小，单独放大 */
 .icon-btn .icon-sun { width: 20px; height: 20px; }
 /* 列表项内的小图标按钮 */

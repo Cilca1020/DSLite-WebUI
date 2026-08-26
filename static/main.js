@@ -7,9 +7,15 @@ const isMobileLayout = () => portraitMQ.matches;
 
 async function init() {
   if (!(await initAuth())) return;
-  // 竖屏（手机 / 竖持平板）：默认收起侧边栏，避免首次进入即遮挡对话区
+  // 竖屏（手机 / 竖持平板）：默认收起侧边栏，避免首次进入即遮挡对话区。
+  // 侧栏过渡动画在收起前临时禁用：HTML 初始态是 open（桌面端需要），
+  // 若直接改 collapsed 会触发一次"先展开再滑出"的多余启动动画。
   if (isMobileLayout()) {
+    const sidebarEl = document.querySelector(".sidebar");
+    sidebarEl.style.transition = "none";
     document.querySelector(".app").setAttribute("data-sidebar", "collapsed");
+    void sidebarEl.offsetWidth; // 强制同步应用收起状态，随后恢复过渡
+    sidebarEl.style.transition = "";
   }
   // 模型列表（隐藏 GPT 选项；历史会话中已是 GPT 的模型仍可正常打开）
   const allModels = await apiGet("/api/models");
@@ -246,15 +252,22 @@ async function init() {
       document.querySelector(".app").setAttribute("data-sidebar", "collapsed");
     }
   });
-  // 移动端：侧栏打开时，点击侧栏之外的区域（对话区）也可关闭抽屉
-  document.querySelector(".main").addEventListener("click", (e) => {
-    if (!isMobileLayout()) return;
-    if (e.target.closest("#toggleSidebarBtn")) return; // 开关按钮交给它自己处理
-    const app = document.querySelector(".app");
-    if (app.getAttribute("data-sidebar") === "open") {
-      app.setAttribute("data-sidebar", "collapsed");
-    }
-  });
+  // 移动端：侧栏打开时，点击侧栏之外的区域（对话区）可关闭抽屉。
+  // 用捕获阶段监听：在事件到达目标按钮之前拦截，阻断面板外按钮自身的点击
+  // （防误触，如"发送""参数设置"），仅执行"关闭抽屉"这一动作。
+  document.querySelector(".main").addEventListener(
+    "click",
+    (e) => {
+      if (!isMobileLayout()) return;
+      if (e.target.closest("#toggleSidebarBtn")) return; // 开关按钮交给它自己处理
+      const app = document.querySelector(".app");
+      if (app.getAttribute("data-sidebar") === "open") {
+        e.stopImmediatePropagation(); // 阻断事件继续传播到面板外按钮，防止误触
+        app.setAttribute("data-sidebar", "collapsed");
+      }
+    },
+    true
+  );
   // 旋转屏幕时同步侧栏状态：竖屏收起（抽屉式）、横屏展开，保证与 CSS 布局一致
   window.addEventListener("orientationchange", () => {
     document.querySelector(".app").setAttribute(
