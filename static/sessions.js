@@ -111,6 +111,14 @@ async function refreshSessions() {
     title.style.flex = "1";
     li.style.cursor = "pointer";
     li.onclick = () => openSession(s.id);
+    const exportBtn = document.createElement("button");
+    exportBtn.className = "item-btn";
+    exportBtn.title = "导出对话（JSON / Markdown）";
+    exportBtn.innerHTML = svgIcon("download");
+    exportBtn.onclick = (e) => {
+      e.stopPropagation();
+      onExportClick(exportBtn, s.id);
+    };
     const renameBtn = document.createElement("button");
     renameBtn.className = "item-btn";
     renameBtn.title = "重命名";
@@ -145,6 +153,7 @@ async function refreshSessions() {
       }
     };
     li.appendChild(title);
+    li.appendChild(exportBtn);
     li.appendChild(renameBtn);
     li.appendChild(del);
     ul.appendChild(li);

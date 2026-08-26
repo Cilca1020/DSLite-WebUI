@@ -144,7 +144,7 @@ body {
 
 /* 侧边栏 */
 .sidebar {
-  width: 240px;
+  width: 280px;
   background: var(--bg-sidebar);
   color: var(--text-sidebar);
   display: flex;
@@ -243,6 +243,31 @@ body {
 .item-btn.danger { color: var(--danger); }
 .item-btn.danger:hover { color: var(--danger-hover); }
 
+/* 导出格式选择菜单（fixed 定位，不受侧边栏 overflow 裁剪） */
+.export-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 200px;
+  padding: 4px;
+  background: var(--bg-panel);
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+}
+.export-menu-item {
+  display: block;
+  width: 100%;
+  padding: 9px 10px;
+  border: none;
+  background: transparent;
+  color: var(--field-text);
+  font-size: 13px;
+  text-align: left;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.export-menu-item:hover { background: var(--btn-hover); }
+
 /* 主区 */
 .main {
   flex: 1;
@@ -309,7 +334,7 @@ body {
   position: fixed;
   top: 0;
   right: 0;
-  width: 340px;
+  width: 400px;
   max-width: 90vw;
   height: 100vh;
   background: var(--bg-panel);
@@ -417,7 +442,7 @@ body {
 .settings-group .param-field .switch-row {
   display: flex;
   flex-direction: row;
-  width: 100%;
+  width: fit-content; /* 触发范围只覆盖开关本身，不占满整行 */
   align-items: center;
   justify-content: flex-start;
   gap: 10px;

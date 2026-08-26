@@ -8,6 +8,7 @@
 - 实时调整推理参数：temperature、top_p、max_tokens、system prompt
 - 多模型切换（通过配置）
 - 多会话保存与历史记录
+- 会话导出：支持 JSON（完整结构化数据）、Markdown（可读对话记录）、纯文本（txt，无标记符号）三种格式下载
 - 参数预设模板
 - 用户输入 API Key 后，首轮问答完成时自动总结会话标题（每个会话仅一次，最多 10 字）
 - API Key 在网页端输入，存于浏览器 localStorage（后端不持久化 Key）
@@ -28,6 +29,7 @@ DeepSeek_WebUI/
 │   ├── api.js        # 网络请求封装
 │   ├── render.js     # 渲染逻辑（markdown / 消息气泡）
 │   ├── sessions.js   # 参数读写与会话管理
+│   ├── export.js     # 会话导出（JSON / Markdown / 纯文本）
 │   ├── chat.js       # 流式输出与消息操作
 │   ├── main.js       # 初始化入口
 │   ├── file_reader.js  # 文件读取模块

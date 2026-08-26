@@ -11,13 +11,14 @@
   .app { height: 100vh; height: 100dvh; }
 
   /* ---- 侧边栏：改为左侧覆盖式抽屉 ----
-     桌面版靠 width 缩放收起；移动版用 transform 滑入滑出，宽度保持 240px */
+     桌面版靠 width 缩放收起；移动版用 transform 滑入滑出，宽度保持 280px */
   .sidebar {
     position: fixed;
     top: 0;
     bottom: 0;
     left: 0;
-    width: 240px;
+    width: 280px;
+    max-width: 85vw; /* 超小屏（如 320px 宽）自动收缩，避免几乎全屏 */
     z-index: 30;
     box-shadow: 4px 0 16px rgba(0, 0, 0, 0.18);
     transition: transform 0.28s ease, opacity 0.2s ease;
@@ -28,7 +29,7 @@
     pointer-events: auto;
   }
   .app[data-sidebar="collapsed"] .sidebar {
-    width: 240px; /* 覆盖桌面版 width:0 的收起方式 */
+    width: 280px; /* 覆盖桌面版 width:0 的收起方式 */
     padding-left: 12px;
     padding-right: 12px;
     transform: translateX(-100%);
