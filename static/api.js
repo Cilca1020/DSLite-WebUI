@@ -19,12 +19,14 @@ async function apiDelete(url) {
   return r.json();
 }
 
-// 流式对话：返回后端逐块文本，通过 onChunk 回调渲染
-async function streamChat(payload, onChunk) {
+// 流式对话：返回后端逐块文本，通过 onChunk 回调渲染。
+// signal 可选：传入 AbortSignal 后可被「停止生成」中断（中断抛 AbortError）。
+async function streamChat(payload, onChunk, signal) {
   const r = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    signal,
   });
   if (!r.ok) {
     const err = await r.json().catch(() => ({}));

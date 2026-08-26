@@ -214,8 +214,31 @@ function buildFileCardsEl(files) {
   return wrap;
 }
 
+// 在被截断（用户停止生成）的助手气泡上追加灰色提示。幂等：同一气泡不重复添加。
+// hasContent=true：回答已有部分内容，提示显示在气泡下方；
+// hasContent=false：流式输出开始前即被停止（气泡为空），提示显示在气泡内部作为占位。
+function markInterrupted(assistantEl, hasContent) {
+  if (!assistantEl) return;
+  if (!hasContent) {
+    if (assistantEl.querySelector(".msg-interrupted-empty")) return;
+    const hint = document.createElement("div");
+    hint.className = "msg-interrupted-empty";
+    hint.textContent = "回答已中断";
+    assistantEl.appendChild(hint);
+    // 标记空气泡：CSS 据此收窄气泡内边距，避免占位提示把气泡撑得过高
+    assistantEl.classList.add("msg-empty-interrupted");
+    return;
+  }
+  const row = assistantEl.parentNode;
+  if (!row || row.querySelector(".msg-interrupted")) return;
+  const hint = document.createElement("div");
+  hint.className = "msg-interrupted";
+  hint.textContent = "回答已中断";
+  row.insertBefore(hint, assistantEl.nextSibling);
+}
+
 // 渲染一条助手消息（支持思考折叠块），返回元素
-function renderAssistant(text, reasoning, msgIndex = null) {
+function renderAssistant(text, reasoning, msgIndex = null, interrupted = false) {
   const el = addMsgEl("assistant", text, true, msgIndex); // 正文已按 markdown 渲染
   if (reasoning) {
     const wrap = document.createElement("details");
@@ -229,5 +252,6 @@ function renderAssistant(text, reasoning, msgIndex = null) {
     wrap.appendChild(body);
     el.insertBefore(wrap, el.firstChild);
   }
+  if (interrupted) markInterrupted(el, !!text);
   return el;
 }

@@ -258,13 +258,15 @@ def delete_message(username, sid, index):
     return session
 
 
-def append_message(username, sid, role, content, reasoning=None, files=None):
+def append_message(username, sid, role, content, reasoning=None, files=None, interrupted=None):
     session = get_session(username, sid) or create_session(username)
     message = {"role": role, "content": content, "ts": time.time()}
     if reasoning is not None:
         message["reasoning"] = reasoning
     if files is not None:
         message["files"] = [{"name": f.get("name", ""), "content": f.get("content", "")} for f in files]
+    if interrupted is not None:
+        message["interrupted"] = bool(interrupted)
     session["messages"].append(message)
     session["updated_at"] = time.time()
     _save_session(username, session)

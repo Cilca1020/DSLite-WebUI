@@ -615,6 +615,27 @@ body {
   --msg-row-align: end;
 }
 
+/* 被停止生成的助手气泡下方的灰色提示：居中小字，表明回答被截断 */
+.msg-interrupted {
+  font-size: 12px;
+  color: var(--text-dim);
+  text-align: center;
+  padding: 8px 0 4px;
+  user-select: none;
+}
+/* 空气泡（流式输出开始前即被停止）内的灰色占位提示：左对齐 */
+.msg-interrupted-empty {
+  font-size: 13px;
+  color: var(--text-dim);
+  text-align: left;
+  padding: 0;
+  user-select: none;
+}
+/* 只有占位提示的空气泡：收窄上下内边距，避免提示文字被气泡内边距撑得过高 */
+.msg.assistant.msg-empty-interrupted {
+  padding: 8px 20px;
+}
+
 /* 消息操作条：常驻显示在气泡外右下方，不依赖悬停（兼容移动端）。
    grid 同列自动同宽，内部按钮靠右 */
 .msg-actions {
@@ -949,9 +970,19 @@ html.theme-transition *::after {
   border-radius: 8px;
   font-size: 14px;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
 }
 .send-btn:hover { background: var(--accent-hover); }
 .send-btn:disabled { background: var(--accent-disabled); cursor: not-allowed; }
+.send-btn svg { width: 16px; height: 16px; flex: none; }
+/* 生成中发送按钮切换为「停止生成」：淡红底 + 红字保留停止语义，避免整块实心红刺眼。
+   保持无边框、同内边距与二字文字，宽度与发送按钮一致。 */
+.send-btn.stop { background: rgba(255, 107, 107, 0.12); color: var(--danger); }
+.send-btn.stop:hover { background: rgba(255, 107, 107, 0.2); color: var(--danger-hover); }
 
 /* 聊天气泡内的文件卡片：代表文件的气泡，显示在用户气泡上方 */
 .file-cards {

@@ -1,5 +1,36 @@
 /* 发送/重试核心与消息操作（编辑/删除/重试） */
 
+// 当前流式请求的中止控制器（供「停止生成」按钮使用）；null 表示无进行中的生成
+let activeAbortController = null;
+// 是否正在生成：生成期间忽略重复发送（防止 Enter 键并发触发第二个请求）
+let isGenerating = false;
+
+// 生成开始：发送按钮切换为「停止生成」按钮（仅生成期间显示）。
+// 纯文字「停止」与「发送」同为二字，宽度自然保持一致。
+function enterGeneratingState() {
+  const btn = $("#sendBtn");
+  btn.classList.add("stop");
+  btn.title = "停止生成";
+  btn.textContent = "停止";
+  btn.disabled = false; // 停止按钮必须可点击
+  btn.onclick = stopGeneration;
+}
+
+// 生成结束（成功/失败/用户停止）：恢复为发送按钮
+function exitGeneratingState() {
+  const btn = $("#sendBtn");
+  btn.classList.remove("stop");
+  btn.title = "";
+  btn.textContent = "发送";
+  btn.onclick = sendMessage;
+  // disabled 由调用方（sendMessage/retryFrom）负责恢复
+}
+
+// 停止当前流式生成：只中断请求，已生成内容保留在气泡中
+function stopGeneration() {
+  if (activeAbortController) activeAbortController.abort();
+}
+
 // 流式请求助手回复并渲染到 assistantEl。userText 仅用于首次写入历史；
 // saveHistory=true 时会把 user+assistant 两条消息写入后端会话历史。
 // 返回 { full, reasoning } 供调用方更新内存 conversation。
@@ -12,6 +43,13 @@ async function streamAssistant(userText, assistantEl, saveHistory, writeUser = t
     return null;
   }
   const model = $("#modelSelect").value;
+
+  // 停止控制：为本次流式请求创建中止控制器，并把发送按钮切换为「停止」
+  const controller = new AbortController();
+  activeAbortController = controller;
+  isGenerating = true;
+  enterGeneratingState();
+  let aborted = false; // 是否被用户停止生成（气泡将标记为截断）
 
   // 推理过程折叠块：默认不创建，仅当真正收到 reasoning 内容时才按需创建
   let reasoningWrap = null;
@@ -195,33 +233,47 @@ async function streamAssistant(userText, assistantEl, saveHistory, writeUser = t
         model,
         // 把用户消息携带的文本文件内容拼接到对应 user 的 content 中，
         // 使模型能看到文件内容（files 本身不作为独立消息）
-        messages: conversation.map((m) => {
-          if (m.role === "user" && m.files && m.files.length) {
-            const appended = m.files
-              .map((f) => {
-                if (f.binary) {
-                  // 二进制办公文档：以 base64 附件形式标注（文本模型仅能识别为附件）
-                  return `\n\n--- 附件（二进制，${f.name}，${f.content.length} 字节 base64）：请知悉该文件为二进制文档，无法在此直接解析内容 ---`;
-                }
-                return `\n\n--- 文件内容：${f.name} ---\n${f.content}`;
-              })
-              .join("");
-            return { role: "user", content: (m.content || "") + appended };
-          }
-          return { role: m.role, content: m.content };
-        }),
+        messages: conversation
+          // 过滤空内容的助手消息（被停止时保存的空消息），避免污染模型上下文
+          .filter((m) => !(m.role === "assistant" && !(m.content || "").trim()))
+          .map((m) => {
+            if (m.role === "user" && m.files && m.files.length) {
+              const appended = m.files
+                .map((f) => {
+                  if (f.binary) {
+                    // 二进制办公文档：以 base64 附件形式标注（文本模型仅能识别为附件）
+                    return `\n\n--- 附件（二进制，${f.name}，${f.content.length} 字节 base64）：请知悉该文件为二进制文档，无法在此直接解析内容 ---`;
+                  }
+                  return `\n\n--- 文件内容：${f.name} ---\n${f.content}`;
+                })
+                .join("");
+              return { role: "user", content: (m.content || "") + appended };
+            }
+            return { role: m.role, content: m.content };
+          }),
         ...readParamsFromUI(),
       },
       (chunk) => {
         buffer += chunk;
         flush();
-      }
+      },
+      controller.signal
     );
   } catch (e) {
-    hideLoading(); // 异常时移除加载动画；输出已结束（失败），同样显示操作条
-    showActions();
-    throw e;
+    // 用户主动停止（AbortError）不视为错误：保留已生成内容，走下方共用收尾
+    if (e && e.name === "AbortError") {
+      aborted = true;
+    } else {
+      hideLoading(); // 异常时移除加载动画；输出已结束（失败），同样显示操作条
+      showActions();
+      throw e;
+    }
   }
+  // 生成结束（成功/失败/用户停止）：清除中止控制器并恢复发送按钮
+  activeAbortController = null;
+  isGenerating = false;
+  exitGeneratingState();
+
   // 流结束后处理残留缓冲
   if (buffer) {
     applyChunk(buffer);
@@ -239,6 +291,8 @@ async function streamAssistant(userText, assistantEl, saveHistory, writeUser = t
   if (reasoning && reasoningBody) renderMarkdown(reasoningBody, reasoning);
   // 流式结束后保存原始 markdown 源，供"复制为 Markdown"使用
   assistantEl._rawText = full;
+  // 被用户停止时追加灰色提示：有内容显示在气泡下方，无内容显示在气泡内占位
+  if (aborted) markInterrupted(assistantEl, !!(full || reasoning));
   // 存历史：content 存纯回答（用于渲染+上传），reasoning 单独存（仅渲染）
   if (saveHistory && currentSessionId) {
     if (writeUser)
@@ -247,11 +301,16 @@ async function streamAssistant(userText, assistantEl, saveHistory, writeUser = t
         content: userText,
         files: files && files.length ? files : undefined,
       });
-    await apiPost("/api/sessions/" + currentSessionId + "/msg", {
-      role: "assistant",
-      content: full,
-      reasoning: reasoning || undefined,
-    });
+    // 保存助手消息：被停止且无输出时也保存空消息并标记 interrupted，
+    // 使刷新/重开后仍能看到「回答已中断」提示（发送上下文时会被过滤）；
+    // 正常结束但内容为空则不保存，避免产生无意义空气泡。
+    if (full || reasoning || aborted)
+      await apiPost("/api/sessions/" + currentSessionId + "/msg", {
+        role: "assistant",
+        content: full,
+        reasoning: reasoning || undefined,
+        interrupted: aborted || undefined,
+      });
     // 首轮问答完成后自动生成一次会话标题；失败不影响当前对话。
     if (writeUser) {
       autoTitleSession(currentSessionId, 2).then((updated) => {
@@ -260,7 +319,8 @@ async function streamAssistant(userText, assistantEl, saveHistory, writeUser = t
     }
     refreshSessions();
   }
-  return { full, reasoning };
+  // 无任何输出（典型场景：刚发送即点停止）返回 null，调用方不把空气泡计入上下文
+  return full || reasoning ? { full, reasoning } : null;
 }
 
 // 为已有首轮问答且仍使用默认标题的会话补生成标题。
@@ -405,6 +465,7 @@ function dismissKeyboard() {
 
 // 发送消息：渲染用户消息与助手占位，触发流式请求
 async function sendMessage() {
+  if (isGenerating) return; // 生成期间忽略重复发送（防止 Enter 键并发触发）
   const input = $("#userInput");
   const text = input.value.trim();
   // 文本与文件至少有一种；都为空则忽略

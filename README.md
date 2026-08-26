@@ -4,7 +4,7 @@
 
 ## 功能
 
-- 与 DeepSeek / OpenAI 等模型对话（支持流式输出）
+- 与 DeepSeek / OpenAI 等模型对话（支持流式输出，生成过程中可随时「停止生成」，已生成内容保留）
 - 实时调整推理参数：temperature、top_p、max_tokens、system prompt
 - 多模型切换（通过配置）
 - 多会话保存与历史记录

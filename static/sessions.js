@@ -216,7 +216,7 @@ async function openSession(id, opts = {}) {
     .filter((m) => m.role !== "system")
     .forEach((m) => {
       if (m.role === "assistant") {
-        renderAssistant(m.content, m.reasoning || null, mIdx);
+        renderAssistant(m.content, m.reasoning || null, mIdx, !!m.interrupted);
       } else {
         // 用户消息强制纯文本：Markdown 语法按原样显示，不渲染
         addMsgEl(m.role, m.content, false, mIdx, m.files || null);
