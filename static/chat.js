@@ -294,6 +294,7 @@ async function streamAssistant(userText, assistantEl, saveHistory, writeUser = t
   // 被用户停止时追加灰色提示：有内容显示在气泡下方，无内容显示在气泡内占位
   if (aborted) markInterrupted(assistantEl, !!(full || reasoning));
   // 存历史：content 存纯回答（用于渲染+上传），reasoning 单独存（仅渲染）
+  let savedAssistant = false; // 本次是否把 assistant 消息写入了后端历史
   if (saveHistory && currentSessionId) {
     if (writeUser)
       await apiPost("/api/sessions/" + currentSessionId + "/msg", {
@@ -304,13 +305,15 @@ async function streamAssistant(userText, assistantEl, saveHistory, writeUser = t
     // 保存助手消息：被停止且无输出时也保存空消息并标记 interrupted，
     // 使刷新/重开后仍能看到「回答已中断」提示（发送上下文时会被过滤）；
     // 正常结束但内容为空则不保存，避免产生无意义空气泡。
-    if (full || reasoning || aborted)
+    if (full || reasoning || aborted) {
       await apiPost("/api/sessions/" + currentSessionId + "/msg", {
         role: "assistant",
         content: full,
         reasoning: reasoning || undefined,
         interrupted: aborted || undefined,
       });
+      savedAssistant = true;
+    }
     // 首轮问答完成后自动生成一次会话标题；失败不影响当前对话。
     if (writeUser) {
       autoTitleSession(currentSessionId, 2).then((updated) => {
@@ -319,8 +322,9 @@ async function streamAssistant(userText, assistantEl, saveHistory, writeUser = t
     }
     refreshSessions();
   }
-  // 无任何输出（典型场景：刚发送即点停止）返回 null，调用方不把空气泡计入上下文
-  return full || reasoning ? { full, reasoning } : null;
+  // saved 标记供调用方维护会话消息计数：full/reasoning 为空（如刚发送即点停止）时，
+  // 也可能已把空 assistant 消息写入后端历史，调用方据此决定是否递增 sessionTotal。
+  return { full, reasoning, saved: savedAssistant };
 }
 
 // 为已有首轮问答且仍使用默认标题的会话补生成标题。
@@ -436,7 +440,8 @@ async function retryFrom(msgIndex) {
   try {
     sendBtn.disabled = true;
     const res = await streamAssistant(userText, assistantEl, true, false, userFiles);
-    if (res) conversation.push({ role: "assistant", content: res.full });
+    if (res && (res.full || res.reasoning)) conversation.push({ role: "assistant", content: res.full });
+    if (res && res.saved) sessionTotal++; // 后端已保存该 assistant 消息
   } catch (e) {
     assistantEl.textContent = "[错误] " + e.message;
   } finally {
@@ -487,14 +492,15 @@ async function sendMessage() {
     .querySelectorAll(".msg-actions .edit-btn, .msg-actions .retry-btn")
     .forEach((b) => b.remove());
 
-  // 渲染用户消息（传入下标，使操作条可见）；携带文件时在气泡上方渲染文件卡片
+  // 渲染用户消息（传入全局下标，使操作条可见）；携带文件时在气泡上方渲染文件卡片
   // 用户消息强制纯文本：输入中若含 Markdown 语法则按原样显示，不渲染
-  const userIdx = conversation.length;
+  const userIdx = sessionTotal; // 新消息的全局下标 = 当前会话消息总数
   lastUserMsgIndex = userIdx; // 最新一轮，显示编辑按钮（渲染前先设置）
   addMsgEl("user", text || "（已发送文件）", false, userIdx, files);
   input.value = "";
   dismissKeyboard(); // 移动端发送后自动收起虚拟键盘
   conversation.push({ role: "user", content: text, files: files.length ? files : null });
+  sessionTotal++; // user 消息已追加
 
   // 发送后立即清空输入框上方的待发送文件卡片（不等输出完成）
   if (window.FileReaderModule) FileReaderModule.clearPendingFiles();
@@ -507,7 +513,8 @@ async function sendMessage() {
   sendBtn.disabled = true;
   try {
     const res = await streamAssistant(text, assistantEl, true, true, files);
-    if (res) conversation.push({ role: "assistant", content: res.full });
+    if (res && (res.full || res.reasoning)) conversation.push({ role: "assistant", content: res.full });
+    if (res && res.saved) sessionTotal++; // 后端已保存该 assistant 消息（含停止时的空消息）
   } catch (e) {
     assistantEl.textContent = "[错误] " + e.message;
   } finally {

@@ -78,8 +78,10 @@ function hideEmptyHint(box) {
 // 渲染一条消息气泡。返回气泡元素（div），供上层插入 reasoning 折叠块。
 // role: "user" | "assistant"；markdown 控制是否渲染 markdown（用户消息强制纯文本）；
 // msgIndex 非 null 且当前会话存在时，渲染气泡外的操作条；
-// files：用户消息携带的文件（渲染为气泡上方的文件卡片）。
-function addMsgEl(role, text, markdown = true, msgIndex = null, files = null) {
+// files：用户消息携带的文件（渲染为气泡上方的文件卡片）；
+// anchorEl：非 null 时把消息行插入到该元素之前（加载更早消息用），否则追加到末尾；
+// autoScroll：插入后是否自动滚动到底部（加载更早消息时应关闭，保持视口位置）。
+function addMsgEl(role, text, markdown = true, msgIndex = null, files = null, anchorEl = null, autoScroll = true) {
   const box = $("#chatBox");
   // 每行容器：包裹气泡 + 气泡外的操作条
   const row = document.createElement("div");
@@ -186,9 +188,10 @@ function addMsgEl(role, text, markdown = true, msgIndex = null, files = null) {
   // 流式占位的助手气泡（空文本）在输出结束前隐藏操作条，
   // 结束后由 streamAssistant 以滑入动画显示（display:none 不占位，气泡更紧凑）
   if (bar && role === "assistant" && !text) bar.style.display = "none";
-  box.appendChild(row);
+  if (anchorEl) box.insertBefore(row, anchorEl); // 加载更早消息：插入到指定元素之前
+  else box.appendChild(row);
   hideEmptyHint(box); // 有新消息时移除空会话欢迎提示
-  box.scrollTop = box.scrollHeight;
+  if (autoScroll) box.scrollTop = box.scrollHeight;
   return div; // 返回气泡，供上层插入 reasoning 折叠块
 }
 
@@ -238,8 +241,8 @@ function markInterrupted(assistantEl, hasContent) {
 }
 
 // 渲染一条助手消息（支持思考折叠块），返回元素
-function renderAssistant(text, reasoning, msgIndex = null, interrupted = false) {
-  const el = addMsgEl("assistant", text, true, msgIndex); // 正文已按 markdown 渲染
+function renderAssistant(text, reasoning, msgIndex = null, interrupted = false, anchorEl = null, autoScroll = true) {
+  const el = addMsgEl("assistant", text, true, msgIndex, null, anchorEl, autoScroll); // 正文已按 markdown 渲染
   if (reasoning) {
     const wrap = document.createElement("details");
     wrap.className = "reasoning";

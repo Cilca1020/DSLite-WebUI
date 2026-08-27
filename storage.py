@@ -156,6 +156,42 @@ def get_session(username, sid):
     return _row_to_session(row) if row else None
 
 
+def get_session_messages(username, sid, limit=30, before=None):
+    """分页读取会话消息（长对话按需加载更早的消息）。
+
+    before 为全局消息下标锚点：返回下标 < before 的最早 limit 条；
+    不传时返回最新的 limit 条。消息列表按时间升序（最早在前）。
+    返回 dict（含分页信息）或 None（会话不存在）。
+    返回的 messages 每项带全局 index（会话内 user/assistant 消息从 0 起的下标，
+    与 delete_message 的删除下标一致），供前端渲染与后续加载定位。
+    """
+    session = get_session(username, sid)
+    if session is None:
+        return None
+    chat = [m for m in session["messages"] if m.get("role") != "system"]
+    total = len(chat)
+    if before is None:
+        end = total
+    else:
+        try:
+            end = max(0, min(int(before), total))
+        except (TypeError, ValueError):
+            end = total
+    start = max(0, end - limit)
+    page = chat[start:end]
+    return {
+        "id": session["id"],
+        "title": session["title"],
+        "created_at": session["created_at"],
+        "updated_at": session["updated_at"],
+        "model": session["model"],
+        "params": session["params"],
+        "messages": [{"index": start + i, **m} for i, m in enumerate(page)],
+        "total": total,
+        "has_more": start > 0,
+    }
+
+
 def _save_session(username, session):
     with _connect() as conn:
         conn.execute(

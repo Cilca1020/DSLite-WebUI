@@ -346,6 +346,26 @@ def api_get_session(sid):
     return jsonify(s)
 
 
+@app.route("/api/sessions/<sid>/messages")
+def api_get_session_messages(sid):
+    """分页读取会话消息（长对话按需加载）。limit 为单次条数；before 为消息下标锚点，
+    返回该锚点之前最近的 limit 条；不传 before 时返回最新的 limit 条。"""
+    try:
+        limit = max(1, min(int(request.args.get("limit", 30)), 200))
+    except (TypeError, ValueError):
+        limit = 30
+    before = request.args.get("before")
+    if before is not None:
+        try:
+            before = max(0, int(before))
+        except (TypeError, ValueError):
+            before = None
+    data = storage.get_session_messages(session["username"], sid, limit=limit, before=before)
+    if data is None:
+        return jsonify({"error": "会话不存在"}), 404
+    return jsonify(data)
+
+
 @app.route("/api/sessions/<sid>", methods=["DELETE"])
 def api_delete_session(sid):
     storage.delete_session(session["username"], sid)

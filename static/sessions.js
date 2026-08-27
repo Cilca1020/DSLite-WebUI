@@ -7,6 +7,15 @@ let PARAM_META = {};
 let STOP_MAX_ITEMS = 4;
 let STOP_MAX_LEN = 32;
 
+// 长对话分段渲染：初始只渲染最近 PAGE_SIZE 条，上滑到顶部时按需加载更早消息。
+// sessionTotal 记录会话 user/assistant 消息总数（新消息的全局下标 = 追加前总数）；
+// sessionMinIndex 为已渲染最早一条消息的全局下标（作为加载更早消息的锚点）。
+const PAGE_SIZE = 30;
+let sessionTotal = 0;
+let sessionHasMore = false;
+let sessionMinIndex = 0;
+let loadingOlder = false;
+
 function saveApiKey(k) {
   if (k) localStorage.setItem(LS_KEY, k);
   else localStorage.removeItem(LS_KEY);
@@ -165,6 +174,9 @@ async function refreshSessions() {
 function resetChatUI() {
   currentSessionId = null;
   conversation = [];
+  sessionTotal = 0;
+  sessionHasMore = false;
+  sessionMinIndex = 0;
   const box = $("#chatBox");
   box.innerHTML = "";
   showEmptyHint(box); // 未选中对话时居中显示「你好」欢迎提示
@@ -188,41 +200,39 @@ async function newSession() {
 // 用于编辑流程：删除最后一条后，倒数第二条会变成最后一条，若重新标记，
 // 用户尚未发送修改内容时该条也会误显「编辑/重试」按钮。
 async function openSession(id, opts = {}) {
-  const s = await apiGet("/api/sessions/" + id);
+  // 长对话分段加载：初始只取最近 PAGE_SIZE 条渲染；更早消息由上滑滚动按需加载
+  const s = await apiGet("/api/sessions/" + id + "/messages?limit=" + PAGE_SIZE);
+  if (!s || s.error) return;
   currentSessionId = id;
   // 载入该会话独立的 model + 推理参数
   applyConfigToUI(s.model, s.params);
-  // content 始终是纯回答，直接用于模型上下文；reasoning 仅渲染；files 仅 user 消息携带
-  conversation = s.messages
-    .filter((m) => m.role !== "system")
-    .map((m) => ({ role: m.role, content: m.content, files: m.files || null }));
+  // content 始终是纯回答，直接用于模型上下文；reasoning 仅渲染；files 仅 user 消息携带。
+  // 上下文仅包含已加载的消息，上滑加载更早消息后自动扩充。
+  conversation = (s.messages || []).map((m) => ({ role: m.role, content: m.content, files: m.files || null }));
   const box = $("#chatBox");
   box.innerHTML = "";
-  // 先确定最新一轮 user 消息与最后一条 assistant 消息下标（仅这些显示编辑/重试按钮），再渲染
+  // 分页状态：本次返回的是最新一段消息（全局下标最大的一段）
+  sessionTotal = s.total || 0;
+  sessionHasMore = !!s.has_more;
+  sessionMinIndex = s.messages && s.messages.length ? s.messages[0].index : 0;
+  // 最新一轮 user 消息与最后一条 assistant 消息（全局下标），仅这些显示编辑/重试按钮
   lastUserMsgIndex = null;
   lastAssistantMsgIndex = null;
-  let mIdxPre = 0;
   if (!opts.suppressLatestMarkers) {
-    s.messages
-      .filter((m) => m.role !== "system")
-      .forEach((m) => {
-        if (m.role === "user") lastUserMsgIndex = mIdxPre;
-        if (m.role === "assistant") lastAssistantMsgIndex = mIdxPre;
-        mIdxPre++;
-      });
-  }
-  let mIdx = 0; // 仅统计 user/assistant 的下标，与后端 delete_message 对齐
-  s.messages
-    .filter((m) => m.role !== "system")
-    .forEach((m) => {
-      if (m.role === "assistant") {
-        renderAssistant(m.content, m.reasoning || null, mIdx, !!m.interrupted);
-      } else {
-        // 用户消息强制纯文本：Markdown 语法按原样显示，不渲染
-        addMsgEl(m.role, m.content, false, mIdx, m.files || null);
-      }
-      mIdx++;
+    (s.messages || []).forEach((m) => {
+      if (m.role === "user") lastUserMsgIndex = m.index;
+      if (m.role === "assistant") lastAssistantMsgIndex = m.index;
     });
+  }
+  // 渲染（msgIndex 用全局下标，与后端 delete_message 对齐）
+  (s.messages || []).forEach((m) => {
+    if (m.role === "assistant") {
+      renderAssistant(m.content, m.reasoning || null, m.index, !!m.interrupted);
+    } else {
+      // 用户消息强制纯文本：Markdown 语法按原样显示，不渲染
+      addMsgEl(m.role, m.content, false, m.index, m.files || null);
+    }
+  });
   // 渲染完成后滚动到最底部
   box.scrollTop = box.scrollHeight;
   // 空会话（无消息）时居中显示欢迎提示，否则移除
@@ -231,6 +241,38 @@ async function openSession(id, opts = {}) {
   refreshSessions();
   // 切换后清理其他空会话（保留当前正在查看的）
   await cleanupEmptySessions(currentSessionId);
+}
+
+// 上滑到顶部时按需加载更早的消息：prepend 到列表顶部并保持当前视口位置。
+// 用已渲染最早消息的全局下标作为锚点（before），对后续发送/追加新消息免疫。
+async function loadOlderMessages() {
+  if (loadingOlder || !sessionHasMore || !currentSessionId) return;
+  loadingOlder = true;
+  const box = $("#chatBox");
+  const prevHeight = box.scrollHeight;
+  const prevScrollTop = box.scrollTop;
+  try {
+    const s = await apiGet("/api/sessions/" + currentSessionId + "/messages?limit=" + PAGE_SIZE + "&before=" + sessionMinIndex);
+    if (!s || s.error) return;
+    const msgs = s.messages || [];
+    if (!msgs.length) { sessionHasMore = false; return; }
+    const firstRow = box.querySelector(".msg-row"); // 原列表第一条，作为插入锚点
+    msgs.forEach((m) => {
+      if (m.role === "assistant") {
+        renderAssistant(m.content, m.reasoning || null, m.index, !!m.interrupted, firstRow, false);
+      } else {
+        addMsgEl(m.role, m.content, false, m.index, m.files || null, firstRow, false);
+      }
+    });
+    // 扩充模型上下文与分页状态
+    conversation = msgs.map((m) => ({ role: m.role, content: m.content, files: m.files || null })).concat(conversation);
+    sessionHasMore = !!s.has_more;
+    sessionMinIndex = msgs[0].index;
+    // 顶部插入了新内容，滚动条整体下移：补偿 scrollTop，保持当前可视区域不动
+    box.scrollTop = prevScrollTop + (box.scrollHeight - prevHeight);
+  } finally {
+    loadingOlder = false;
+  }
 }
 
 // 清理空会话（无消息），排除 excludeId 指向的当前会话

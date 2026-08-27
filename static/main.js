@@ -192,7 +192,11 @@ async function init() {
     const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
     scrollDownBtn.classList.toggle("hidden", !canScroll || atBottom);
   };
-  chatBoxEl.addEventListener("scroll", updateScrollDown, { passive: true });
+  chatBoxEl.addEventListener("scroll", () => {
+    updateScrollDown();
+    // 上滑接近顶部时按需加载更早的消息（长对话分段渲染）
+    if (chatBoxEl.scrollTop <= 40) loadOlderMessages();
+  }, { passive: true });
   scrollDownBtn.addEventListener("click", () => {
     chatBoxEl.scrollTop = chatBoxEl.scrollHeight; // 瞬时回底，避免长对话滚动动画过慢
   });
