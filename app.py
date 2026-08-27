@@ -610,4 +610,9 @@ def api_delete_preset(name):
 
 
 if __name__ == "__main__":
-    app.run(host=config.HOST, port=config.PORT, debug=True)
+    # 生产环境使用 waitress（支持 Windows 的多线程 WSGI 服务器）。
+    # 关闭 debug 重载器：waitress 不支持 werkzeug 的 reloader。
+    from waitress import serve
+    # _quiet=False 让 waitress 实时打印访问日志（IP、方法、路径、状态码）。
+    # threads 提高并发上限，缓解流式对话占用线程导致的请求排队（Task queue depth 告警）。
+    serve(app, host=config.HOST, port=config.PORT, _quiet=False, threads=16)

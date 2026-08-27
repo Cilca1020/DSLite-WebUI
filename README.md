@@ -76,6 +76,8 @@ DSLite-WebUI/
 │   ├── file_reader.js  # 文件读取模块
 │   └── vendor/       # 第三方库（marked 等）
 ├── data/             # 运行时生成（app.db、旧版会话 JSON、预设，已被 .gitignore 忽略）
+├── restart.py        # 一键重启脚本（跨平台，自动清理占用端口的旧进程）
+├── restart.bat       # Windows 快捷重启入口（双击即可）
 └── requirements.txt
 ```
 
@@ -87,7 +89,7 @@ DSLite-WebUI/
 pip install -r requirements.txt
 ```
 
-2. 启动：
+2. 启动（生产级 waitress 服务器）：
 
 ```bash
 python app.py
@@ -97,6 +99,23 @@ python app.py
 
 4. 首次打开页面先注册账号，之后使用账号、密码和图形验证码登录。
 5. 登录后在页面右上角填入你的 API Key（存于浏览器本地，不会发给除模型服务外的任何地方）。
+
+> 服务器已从 Flask 自带的开发服务器切换到 **waitress**（多线程、原生支持 Windows，可处理流式对话）。如需调整并发线程数，修改 `app.py` 末尾 `serve(...)` 的 `threads` 参数。
+
+### 一键重启脚本
+
+改完代码后 **waitress 不会自动重载**，需重启服务才能生效。提供了两个脚本：
+
+- **Windows**：双击 `restart.bat` —— 自动安装缺失依赖、停掉占用 5000 端口的旧进程并启动服务。
+- **跨平台 / 命令行**：
+
+```bash
+python restart.py                # 重启服务（自动清理占用端口的旧进程）
+python restart.py --install      # 先安装依赖再重启
+python restart.py --port 5001    # 自定义端口（默认读 config.py）
+```
+
+> 脚本会检测并结束占用端口的旧进程再启动，避免「旧进程占着端口导致新进程起不来」。
 
 ## 说明
 
