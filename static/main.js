@@ -324,6 +324,48 @@ async function init() {
     const collapsed = app.getAttribute("data-sidebar") === "collapsed";
     app.setAttribute("data-sidebar", collapsed ? "open" : "collapsed");
   };
+  // 侧栏宽度拖拽调整（仅桌面横屏；移动端抽屉固定宽度不启用）
+  {
+    const app = document.querySelector(".app");
+    const sidebar = document.querySelector(".sidebar");
+    const resizer = document.querySelector(".sidebar-resizer");
+    const SIDEBAR_W_KEY = "dsw_sidebar_width";
+    const MIN_W = 220;   // 下界：保证会话标题仍可读
+    const MAX_W = 480;   // 上界：避免过宽挤压对话区
+    const applySidebarWidth = (px) => {
+      // 上限同时受视口约束，防止把主区挤没（取两者较小者）
+      const cap = Math.min(MAX_W, Math.round(window.innerWidth * 0.45));
+      px = Math.max(MIN_W, Math.min(cap, Math.round(px)));
+      app.style.setProperty("--sidebar-width", px + "px");
+      return px;
+    };
+    // 恢复上次保存的宽度
+    const saved = parseInt(localStorage.getItem(SIDEBAR_W_KEY), 10);
+    if (!isNaN(saved) && saved >= MIN_W && saved <= MAX_W) applySidebarWidth(saved);
+    if (!resizer) return;
+    resizer.addEventListener("mousedown", (e) => {
+      if (isMobileLayout()) return;
+      e.preventDefault();
+      resizer.classList.add("active");
+      sidebar.classList.add("resizing"); // 禁用宽度过渡，拖拽即时响应
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      const startX = e.clientX;
+      const startW = sidebar.getBoundingClientRect().width;
+      const onMove = (ev) => applySidebarWidth(startW + (ev.clientX - startX));
+      const onUp = () => {
+        localStorage.setItem(SIDEBAR_W_KEY, String(Math.round(sidebar.getBoundingClientRect().width)));
+        resizer.classList.remove("active");
+        sidebar.classList.remove("resizing");
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    });
+  }
   // 移动端：点击侧栏中的会话/预设/新建按钮后自动收起抽屉
   document.querySelector(".sidebar").addEventListener("click", (e) => {
     if (!isMobileLayout()) return;

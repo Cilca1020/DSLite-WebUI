@@ -138,13 +138,15 @@ body {
 .password-actions .account-action { flex: 1; }
 
 .app {
+  position: relative; /* 侧栏拖拽把手（.sidebar-resizer）的定位基准 */
   display: flex;
   height: 100vh;
 }
 
-/* 侧边栏 */
+/* 侧边栏（--sidebar-width 由 JS 拖拽调整，默认 280px） */
 .sidebar {
-  width: 280px;
+  width: var(--sidebar-width, 280px);
+  min-width: 0; /* 允许收起时收缩到 0 */
   background: var(--bg-sidebar);
   color: var(--text-sidebar);
   display: flex;
@@ -165,6 +167,38 @@ body {
   opacity: 0;
   pointer-events: none;
 }
+/* 拖拽调整侧栏宽度（仅桌面横屏；移动端在 style-responsive.css 中隐藏）。
+   作为 .app 的直接子元素、以分界线（= 侧栏宽度）定位，避免受侧栏滚动条
+   （scrollbar-gutter 会让侧栏内绝对定位子元素的包含块左移）影响。 */
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  /* 居中压在侧栏与主区的分界线上：把手左缘 = 分界线 - 3px */
+  left: calc(var(--sidebar-width, 280px) - 3px);
+  width: 7px;
+  cursor: col-resize;
+  z-index: 5;
+}
+.sidebar-resizer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: transparent;
+  transition: background 0.2s ease;
+}
+.sidebar-resizer:hover::before,
+.sidebar-resizer.active::before {
+  /* 半透明主题色，分界线更柔和；跟随主题色变量变化 */
+  background: color-mix(in srgb, var(--accent, #4f7cff) 50%, transparent);
+}
+/* 收起时隐藏把手；拖拽中禁用宽度过渡避免滞后 */
+.app[data-sidebar="collapsed"] .sidebar-resizer { display: none; }
+.sidebar.resizing { transition: none; }
 .sidebar-section { flex: 1; }
 .sidebar-head {
   display: flex;

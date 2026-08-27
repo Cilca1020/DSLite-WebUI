@@ -41,6 +41,8 @@
     opacity: 0;
     pointer-events: none;
   }
+  /* 移动端抽屉固定宽度，不需要宽度拖拽 */
+  .sidebar-resizer { display: none; }
 
   /* ---- 顶部栏：grid 三列布局，强制右侧按钮贴右、模型选择器不溢出 ---- */
   .topbar {
