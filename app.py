@@ -36,7 +36,7 @@ import llm_client
 import storage
 
 app = Flask(__name__, static_folder="static")
-app.secret_key = os.environ.get("DEEPSEEK_WEBUI_SECRET_KEY", config.SECRET_KEY)
+app.secret_key = os.environ.get("DSLITE_WEBUI_SECRET_KEY", config.SECRET_KEY)
 
 
 @app.before_request

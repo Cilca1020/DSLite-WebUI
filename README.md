@@ -1,4 +1,4 @@
-# DeepSeek WebUI
+# DSLite-WebUI
 
 一个网页端程序，用于与 DeepSeek 等兼容 OpenAI 协议的大模型对话，支持便捷的参数调整。
 
@@ -17,7 +17,7 @@
 ## 目录结构
 
 ```
-DeepSeek_WebUI/
+DSLite-WebUI/
 ├── app.py            # Flask 后端入口，注册所有接口
 ├── llm_client.py     # 调用大模型的封装（兼容 OpenAI 协议）
 ├── storage.py        # SQLite 账号与会话存储，JSON 参数预设存储
@@ -60,5 +60,5 @@ python app.py
 ## 说明
 
 - 后端仅作为代理转发，每次请求由前端携带 Key，后端不落盘保存 Key。
-- 账号和会话数据保存在 `data/app.db`，会话通过 `username` 外键绑定账号，密码以 PBKDF2 哈希保存；部署到生产环境时请设置 `DEEPSEEK_WEBUI_SECRET_KEY` 环境变量覆盖默认 Flask session 密钥。
+- 账号和会话数据保存在 `data/app.db`，会话通过 `username` 外键绑定账号，密码以 PBKDF2 哈希保存；部署到生产环境时请设置 `DSLITE_WEBUI_SECRET_KEY` 环境变量覆盖默认 Flask session 密钥。
 - 支持的模型在 `config.py` 中配置，默认包含 DeepSeek 与 OpenAI 兼容端点。

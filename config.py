@@ -7,7 +7,7 @@
 # 0.0.0.0 允许局域网内其他设备（如手机）访问；仅本机访问可改回 127.0.0.1
 HOST = "0.0.0.0"
 PORT = 5000
-SECRET_KEY = "deepseek-webui-change-this-secret"
+SECRET_KEY = "dslite-webui-change-this-secret"
 
 # 自动生成会话标题使用的固定模型（不跟随 UI 选择，保证标题生成轻量稳定）
 AUTO_TITLE_MODEL = "deepseek-chat"
@@ -29,18 +29,6 @@ SUPPORTED_MODELS = [
         "label": "DeepSeek Reasoner",
         "base_url": "https://api.deepseek.com/v1",
         "api_key_hint": "sk-...（DeepSeek 控制台获取）",
-    },
-    {
-        "id": "gpt-4o-mini",
-        "label": "OpenAI GPT-4o-mini",
-        "base_url": "https://api.openai.com/v1",
-        "api_key_hint": "sk-...（OpenAI 平台获取）",
-    },
-    {
-        "id": "gpt-4o",
-        "label": "OpenAI GPT-4o",
-        "base_url": "https://api.openai.com/v1",
-        "api_key_hint": "sk-...（OpenAI 平台获取）",
     },
 ]
 
