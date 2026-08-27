@@ -6,8 +6,8 @@ let activeAbortController = null;
 let isGenerating = false;
 
 // ------------------------- 向量记忆（长对话）前端状态 -------------------------
-// 模型选择存在浏览器缓存（全局，不随会话切换）；启用开关与 N 按「对话」单独存储（后端 sessions.vm）。
-// 新建对话默认关闭（开关关、N=默认）。
+// 模型选择随会话恢复（打开会话时以该会话保存的 model 覆盖浏览器缓存，见 applyVmToUI）；
+// 启用开关与 N 按「对话」单独存储（后端 sessions.vm）。新建对话默认关闭（开关关、N=默认）。
 const VM_DEFAULT_N = 10; // N 默认值（对应后端 RECENT_N）
 const VM_N_MAX = 1000; // N 输入上限（轮次会变化，不做动态钳制）
 const VM_MODEL_KEY = "dsw_vm_model"; // 浏览器缓存键
@@ -44,10 +44,13 @@ function vmUse() {
 
 // 把会话中的向量记忆设置应用到前端状态与设置面板（openSession/resetChatUI 调用）。
 // vm 为后端返回的 {enabled, model, recent_n}；null 表示新会话默认（关闭）。
-// 模型选择来自浏览器缓存（vmLoadModel），不随会话切换。
+// 模型选择随会话恢复：打开会话时以该会话保存的 model 覆盖浏览器缓存。
+// 否则在另一会话切换为「无模型」清空全局缓存后，本会话的模型选择会丢失。
 function applyVmToUI(vm) {
   vmEnabled = !!(vm && vm.enabled);
   vmRecentN = (vm && vm.recent_n) || VM_DEFAULT_N;
+  // vm 存在（含 model 为空的会话）即覆盖缓存；null（新会话）则保留全局缓存沿用上次选择
+  if (vm && typeof vm.model === "string") vmSaveModel(vm.model);
   if (window.renderVmModelBox) window.renderVmModelBox();
   const en = $("#vmEnabled");
   if (en) en.checked = vmEnabled;
