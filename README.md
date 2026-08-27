@@ -89,7 +89,7 @@ DSLite-WebUI/
 pip install -r requirements.txt
 ```
 
-2. 启动（生产级 waitress 服务器）：
+2. 启动（ waitress 服务器）：
 
 ```bash
 python app.py
