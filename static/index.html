@@ -198,9 +198,9 @@
           <span class="param-hint">短对话由你控制开关；对话超过最近 N 条后强制开启，避免早期内容被截断丢失。</span>
         </div>
         <div class="param-field">
-          <label for="vmRecentN">最近消息条数 N</label>
+          <label for="vmRecentN">最近 N 轮对话</label>
           <input id="vmRecentN" type="number" min="1" max="50" step="1" />
-          <span class="param-hint">拼接上下文保留最近 N 条消息，N 不得超过当前对话轮次总数。</span>
+          <span class="param-hint">拼接上下文保留最近 N 轮对话（一轮 = 一次提问 + 一次回答），N 不超过当前会话总轮数。</span>
         </div>
       </section>
 

@@ -25,14 +25,14 @@ function vmRounds() {
   return conversation.filter((m) => m.role === "user" && (m.content || "").trim()).length;
 }
 
-// 生效的最近 N 条：用户自定义值，但不得超过当前对话轮次总数（至少 1）
+// 生效的最近 N 轮：用户自定义值，但不得超过当前对话总轮数（至少 1）
 function vmEffectiveN() {
   return Math.max(1, Math.min(vmLoadN(), Math.max(1, vmRounds())));
 }
 
-// 长对话判定：消息条数超过用户设定的最近窗口 N，早期内容会掉出窗口 -> 强制开启向量记忆
+// 长对话判定：对话轮数超过用户设定的最近窗口 N，早期轮次会掉出窗口 -> 强制开启向量记忆
 function vmIsLong() {
-  return conversation.filter((m) => m.role !== "system" && (m.content || "").trim()).length > vmLoadN();
+  return vmRounds() > vmLoadN();
 }
 
 // 本次请求是否启用向量记忆：短对话由用户控制，长对话强制开启；需已选向量化模型
@@ -40,7 +40,7 @@ function vmUse() {
   return !!vmLoadModel() && (vmLoadEnabled() || vmIsLong());
 }
 
-// 依据当前对话轮次更新设置面板中 N 的上限（N 不得超过轮次总数）。
+// 依据当前对话轮次更新设置面板中 N 的上限（N 不得超过总轮数）。
 // 无对话时不做钳制（保留用户设定），仅在有对话时按轮次限制。
 function vmUpdateNMax() {
   const input = $("#vmRecentN");
@@ -303,7 +303,7 @@ async function streamAssistant(userText, assistantEl, saveHistory, writeUser = t
           }),
         ...readParamsFromUI(),
         // 向量记忆：短对话由用户控制，长对话强制开启；
-        // 后端负责「最近 N 条 + 向量检索 Top-K」拼接（N 不超过当前对话轮次总数）
+        // 后端负责「最近 N 轮 + 向量检索 Top-K」拼接（N 不超过当前会话总轮数）
         session_id: currentSessionId || undefined,
         vector_memory: vmUse(),
         vector_memory_model: vmLoadModel() || undefined,

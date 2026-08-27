@@ -72,15 +72,16 @@ STOP_MAX_LEN = 32
 REQUEST_TIMEOUT = 60
 
 # ------------------------- 向量记忆（长对话） -------------------------
-# 开启后，/api/chat 发给模型的对话历史 = 最近 VECTOR_MEMORY_RECENT_N 条
+# 开启后，/api/chat 发给模型的对话历史 = 最近 VECTOR_MEMORY_RECENT_N 轮对话
 # + 向量检索 VECTOR_MEMORY_TOP_K 条（本地 sentence-transformers + SQLite，无需外部 API）。
+# 「一轮」= 一次提问 + 一次回答；N 由用户自定义，不得超过当前会话总轮数。
 # 前端在 /api/chat 请求里带 session_id 后才会真正生效。
 VECTOR_MEMORY_ENABLED = True
 VECTOR_MEMORY_DB = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "data", "vector_memory.db"
 )
 VECTOR_MEMORY_DEVICE = "auto"  # auto / cuda / mps / cpu
-VECTOR_MEMORY_RECENT_N = 10
+VECTOR_MEMORY_RECENT_N = 10  # 最近 N 轮对话
 VECTOR_MEMORY_TOP_K = 5
 VECTOR_MEMORY_MIN_SCORE = 0.3
 

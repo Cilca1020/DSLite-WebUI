@@ -358,6 +358,33 @@ class VectorMemory:
                 )
         return len(new_items)
 
+    def reconcile_session(self, session_id, messages):
+        """以 messages（应为存储中的完整会话 + 本次请求消息）为准双向同步向量库：
+        补入新增消息，并删除已不在 messages 中的 chunk（如被删除/重试掉的消息）。
+
+        这样编辑、重试、删除会话消息后，旧内容不会被检索进新上下文。
+        返回新增条数；删除操作不需要加载模型。
+        """
+        added = self.sync_session(session_id, messages)
+        items = [
+            {"role": m.get("role", "user"), "content": (m.get("content") or "").strip()}
+            for m in messages
+            if m.get("role") in ("user", "assistant") and (m.get("content") or "").strip()
+        ]
+        hashes = {_chunk_hash(session_id, it["role"], it["content"]) for it in items}
+        with self._connect() as conn:
+            if hashes:
+                placeholders = ",".join("?" * len(hashes))
+                conn.execute(
+                    f"DELETE FROM memory_chunks WHERE session_id = ? AND hash NOT IN ({placeholders})",
+                    [session_id, *sorted(hashes)],
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM memory_chunks WHERE session_id = ?", (session_id,)
+                )
+        return added
+
     def add_messages(self, session_id, messages):
         """批量入库（等价于 sync_session，保留兼容旧接口）。返回实际入库条数。"""
         return self.sync_session(session_id, messages)
@@ -440,16 +467,24 @@ class VectorMemory:
         top_k=None,
         query=None,
         min_score=None,
+        recent_rounds=None,
+        full_messages=None,
     ):
-        """按“最近 recent_n 条 + 向量检索 top_k 条”拼接对话历史。
+        """按“最近 N 轮对话 + 更早的向量检索结果（按轮次）”拼接对话历史。
 
-        messages:  会话完整消息列表（含 role/content，可含 system/纯文件等）。
-        session_id: 向量检索范围（缺省为 None 即全部会话）。
-        query:      检索用查询，缺省取最后一条 user 消息内容。
-        min_score:  相似度阈值，低于该值丢弃（None 用默认）。
+        messages:       本次请求的消息列表（含 role/content），用于最近窗口与输出。
+        full_messages:  可选，存储中的完整会话消息列表。检索命中会按“轮次”
+                       （一轮 = 一次提问 + 一次回答）展开，需要完整的会话结构，
+                       因此传它可让前端分页窗口之外的早期轮次也被完整召回。
+        session_id:     向量检索范围（缺省为 None 即全部会话）。
+        recent_n:       最近窗口的消息条数（与 recent_rounds 二选一，recent_rounds 优先）。
+        recent_rounds:  最近窗口的对话轮数（一轮 = 一次提问 + 一次回答），
+                       不得超过会话总轮数；内部换算成消息条数。
+        query:          检索用查询，缺省取最后一条 user 消息内容。
+        min_score:      相似度阈值，低于该值丢弃（None 用默认）。
 
         返回可直接喂给 LLM 的 [{role, content}, ...]：
-        命中的历史记忆（按时间升序）在前，最近窗口在后；
+        检索命中的完整轮次（按时间升序）在前，最近窗口在后；
         命中内容若已在最近窗口内会自动去重。
         """
         chat = [
@@ -460,6 +495,16 @@ class VectorMemory:
         if not chat:
             return []
         recent_n = recent_n or self.recent_n
+        if recent_rounds is not None:
+            user_idx = [i for i, m in enumerate(chat) if m["role"] == "user"]
+            rounds_total = len(user_idx)
+            if rounds_total == 0:
+                recent_n = len(chat)
+            else:
+                nr = max(1, min(int(recent_rounds), rounds_total))
+                # 最近 nr 轮 = 从倒数第 nr 条 user 消息开始的所有消息
+                start = user_idx[rounds_total - nr] if nr < rounds_total else 0
+                recent_n = len(chat) - start
         top_k = top_k or self.top_k
         min_score = self.min_score if min_score is None else min_score
 
@@ -470,8 +515,49 @@ class VectorMemory:
             qtext, session_id=session_id, top_k=top_k, exclude_contents=recent_contents
         )
         hits = [h for h in hits if h["score"] >= min_score]
-        memory = [
-            {"role": h["role"], "content": h["content"]}
-            for h in sorted(hits, key=lambda h: h["ts"])
-        ]
+        # 轮次展开的基准：优先用完整会话（可能超出本次请求的分页窗口），
+        # 否则退化为本次消息列表。
+        if full_messages is not None:
+            base = [
+                {"role": m.get("role"), "content": (m.get("content") or "").strip()}
+                for m in full_messages
+                if m.get("role") in ("user", "assistant") and (m.get("content") or "").strip()
+            ]
+        else:
+            base = chat
+        memory = self._expand_rounds(base, hits, recent_contents)
         return memory + recent
+
+    def _expand_rounds(self, chat, hits, recent_contents):
+        """把命中的单条消息展开为完整轮次（一轮 = 一条提问 + 紧随其后的回答），
+        按时间升序返回，且去掉已在最近窗口内出现的消息，避免碎片化/重复。"""
+        if not hits:
+            return []
+        # 命中内容 -> 在 chat 中的下标（同内容取首个）
+        used = set()
+        chosen = []
+        for h in hits:
+            for i, m in enumerate(chat):
+                if m["content"] == h["content"] and i not in used:
+                    used.add(i)
+                    chosen.append(i)
+                    break
+        # 展开：找到每条命中所属轮次的 user 消息及其后连续 assistant 回答
+        round_idxs = set()
+        for i in chosen:
+            k = i
+            while k > 0 and chat[k]["role"] != "user":
+                k -= 1
+            if chat[k]["role"] != "user":
+                round_idxs.add(i)
+                continue
+            round_idxs.add(k)
+            j = k + 1
+            while j < len(chat) and chat[j]["role"] == "assistant":
+                round_idxs.add(j)
+                j += 1
+        return [
+            {"role": chat[i]["role"], "content": chat[i]["content"]}
+            for i in sorted(round_idxs)
+            if chat[i]["content"] not in recent_contents
+        ]

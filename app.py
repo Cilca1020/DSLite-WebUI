@@ -317,14 +317,19 @@ def _build_chat_context(user_messages, sid, data, username=None):
         top_k=config.VECTOR_MEMORY_TOP_K,
         min_score=config.VECTOR_MEMORY_MIN_SCORE,
     )
-    # 增量索引（内容哈希去重，幂等）：前端只发送已加载的最近分页，
-    # 更早的消息可能从未进入向量库，因此先以存储中的完整会话为准同步一次，
-    # 再补上本次请求中尚未落库的消息（如当前提问），确保早期内容也能被检索到。
+    # 双向同步（补新 + 删旧）：以「存储中的完整会话 + 本次请求消息」为准，
+    # 确保 ①前端只发送分页时早期消息也能被索引；②被编辑/重试/删除的消息
+    # 不再残留在向量库中被检索进新上下文。
+    stored_msgs = None
     if username and sid:
         stored = storage.get_session(username, sid)
         if stored:
-            vm.sync_session(sid, stored["messages"])
-    vm.sync_session(sid, user_messages)
+            stored_msgs = stored["messages"]
+            vm.reconcile_session(sid, list(stored_msgs) + list(user_messages))
+        else:
+            vm.sync_session(sid, user_messages)
+    else:
+        vm.sync_session(sid, user_messages)
     # 检索查询取最后一条 user 消息（当前提问）
     query = next(
         (
@@ -334,19 +339,20 @@ def _build_chat_context(user_messages, sid, data, username=None):
         ),
         "",
     )
-    # 最近 N 条由用户自定义，但不得超过对话轮次总数（至少 1）
-    recent_n = config.VECTOR_MEMORY_RECENT_N
+    # N 为用户自定义的「最近 N 轮对话」（一轮 = 一次提问 + 一次回答），
+    # 不得超过当前会话总轮数；由 build_history 内部换算成消息条数。
+    n_rounds = config.VECTOR_MEMORY_RECENT_N
     try:
-        recent_n = int(data.get("vector_memory_recent_n") or recent_n)
+        n_rounds = int(data.get("vector_memory_recent_n") or n_rounds)
     except (TypeError, ValueError):
         pass
-    chat = [
-        m for m in user_messages
-        if m.get("role") in ("user", "assistant") and (m.get("content") or "").strip()
-    ]
-    rounds = sum(1 for m in chat if m.get("role") == "user")
-    recent_n = max(1, min(recent_n, max(1, rounds)))
-    return vm.build_history(user_messages, session_id=sid, query=query, recent_n=recent_n)
+    return vm.build_history(
+        user_messages,
+        session_id=sid,
+        query=query,
+        recent_rounds=n_rounds,
+        full_messages=stored_msgs,
+    )
 
 
 @app.route("/api/chat", methods=["POST"])
