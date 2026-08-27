@@ -5,6 +5,56 @@ let activeAbortController = null;
 // 是否正在生成：生成期间忽略重复发送（防止 Enter 键并发触发第二个请求）
 let isGenerating = false;
 
+// ------------------------- 向量记忆（长对话）前端状态 -------------------------
+// 选取结果保存在浏览器缓存（localStorage），后端只负责实际向量化与检索
+const VM_MODEL_KEY = "dsw_vm_model";
+const VM_ENABLED_KEY = "dsw_vm_enabled";
+const VM_N_KEY = "dsw_vm_recent_n";
+const VM_DEFAULT_N = 10; // N 默认值（对应后端 RECENT_N）
+const VM_N_MAX = 50; // N 输入上限
+
+function vmLoadModel() { return localStorage.getItem(VM_MODEL_KEY) || ""; }
+function vmLoadEnabled() { return localStorage.getItem(VM_ENABLED_KEY) === "1"; }
+function vmLoadN() {
+  const v = parseInt(localStorage.getItem(VM_N_KEY) || "", 10);
+  return isNaN(v) ? VM_DEFAULT_N : Math.max(1, Math.min(VM_N_MAX, v));
+}
+
+// 当前对话轮次数（user 消息数）
+function vmRounds() {
+  return conversation.filter((m) => m.role === "user" && (m.content || "").trim()).length;
+}
+
+// 生效的最近 N 条：用户自定义值，但不得超过当前对话轮次总数（至少 1）
+function vmEffectiveN() {
+  return Math.max(1, Math.min(vmLoadN(), Math.max(1, vmRounds())));
+}
+
+// 长对话判定：消息条数超过用户设定的最近窗口 N，早期内容会掉出窗口 -> 强制开启向量记忆
+function vmIsLong() {
+  return conversation.filter((m) => m.role !== "system" && (m.content || "").trim()).length > vmLoadN();
+}
+
+// 本次请求是否启用向量记忆：短对话由用户控制，长对话强制开启；需已选向量化模型
+function vmUse() {
+  return !!vmLoadModel() && (vmLoadEnabled() || vmIsLong());
+}
+
+// 依据当前对话轮次更新设置面板中 N 的上限（N 不得超过轮次总数）。
+// 无对话时不做钳制（保留用户设定），仅在有对话时按轮次限制。
+function vmUpdateNMax() {
+  const input = $("#vmRecentN");
+  if (!input) return;
+  const rounds = vmRounds();
+  const max = rounds > 0 ? Math.max(1, Math.min(VM_N_MAX, rounds)) : VM_N_MAX;
+  input.max = max;
+  const v = parseInt(input.value, 10);
+  if (!isNaN(v) && v > max) {
+    input.value = max;
+    localStorage.setItem(VM_N_KEY, max);
+  }
+}
+
 // 生成开始：发送按钮切换为「停止生成」按钮（仅生成期间显示）。
 // 纯文字「停止」与「发送」同为二字，宽度自然保持一致。
 function enterGeneratingState() {
@@ -252,6 +302,12 @@ async function streamAssistant(userText, assistantEl, saveHistory, writeUser = t
             return { role: m.role, content: m.content };
           }),
         ...readParamsFromUI(),
+        // 向量记忆：短对话由用户控制，长对话强制开启；
+        // 后端负责「最近 N 条 + 向量检索 Top-K」拼接（N 不超过当前对话轮次总数）
+        session_id: currentSessionId || undefined,
+        vector_memory: vmUse(),
+        vector_memory_model: vmLoadModel() || undefined,
+        vector_memory_recent_n: vmUse() ? vmEffectiveN() : undefined,
       },
       (chunk) => {
         buffer += chunk;
@@ -443,6 +499,12 @@ async function retryFrom(msgIndex) {
     if (res && (res.full || res.reasoning)) conversation.push({ role: "assistant", content: res.full });
     if (res && res.saved) sessionTotal++; // 后端已保存该 assistant 消息
   } catch (e) {
+    activeAbortController = null;
+    isGenerating = false;
+    exitGeneratingState();
+    if (e && e.body && e.body.vector_memory_error) {
+      showToast((e.message || "向量记忆不可用") + "，已停止回复");
+    }
     assistantEl.textContent = "[错误] " + e.message;
   } finally {
     sendBtn.disabled = false;
@@ -466,6 +528,31 @@ function dismissKeyboard() {
       chatBox.scrollTop = chatBox.scrollHeight;
     }
   }, 320);
+}
+
+// 向量记忆不可用：toast 提示 + 停止回复 + 把用户发送的内容返回输入框，
+// 并撤销乐观渲染的用户气泡与助手占位（不静默忽略）
+function handleVmFailure(e, text, files) {
+  showToast((e.message || "向量记忆不可用") + "，已停止回复，内容已退回输入框");
+  const input = $("#userInput");
+  input.value = text || "";
+  if (window.FileReaderModule) {
+    FileReaderModule.clearPendingFiles();
+    if (files && files.length) FileReaderModule.addFilesFromData(files);
+  }
+  input.focus();
+  // 撤销乐观渲染：移除刚追加的最后两条消息行（user 气泡 + assistant 占位）
+  const box = $("#chatBox");
+  const rows = Array.from(box.querySelectorAll(".msg-row"));
+  rows.slice(-2).forEach((r) => r.remove());
+  // 恢复内存态
+  if (conversation.length && conversation[conversation.length - 1].role === "user") {
+    conversation.pop();
+  }
+  if (sessionTotal > 0) sessionTotal--;
+  lastUserMsgIndex = null;
+  lastAssistantMsgIndex = null;
+  if (!box.querySelector(".msg-row")) showEmptyHint(box);
 }
 
 // 发送消息：渲染用户消息与助手占位，触发流式请求
@@ -515,8 +602,18 @@ async function sendMessage() {
     const res = await streamAssistant(text, assistantEl, true, true, files);
     if (res && (res.full || res.reasoning)) conversation.push({ role: "assistant", content: res.full });
     if (res && res.saved) sessionTotal++; // 后端已保存该 assistant 消息（含停止时的空消息）
+    vmUpdateNMax();
   } catch (e) {
-    assistantEl.textContent = "[错误] " + e.message;
+    // 异常收尾：任何失败都要恢复发送按钮与生成状态
+    activeAbortController = null;
+    isGenerating = false;
+    exitGeneratingState();
+    if (e && e.body && e.body.vector_memory_error) {
+      // 向量记忆不可用：提示并停止回复，把内容退回输入框，撤销刚渲染的气泡
+      handleVmFailure(e, text, files);
+    } else {
+      assistantEl.textContent = "[错误] " + e.message;
+    }
   } finally {
     sendBtn.disabled = false;
   }

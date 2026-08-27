@@ -30,7 +30,11 @@ async function streamChat(payload, onChunk, signal) {
   });
   if (!r.ok) {
     const err = await r.json().catch(() => ({}));
-    throw new Error(err.error || "请求失败");
+    // 附带 status 与响应体，便于调用方识别向量记忆不可用等特定错误
+    const e = new Error(err.error || "请求失败");
+    e.status = r.status;
+    e.body = err;
+    throw e;
   }
   const reader = r.body.getReader();
   const decoder = new TextDecoder("utf-8");

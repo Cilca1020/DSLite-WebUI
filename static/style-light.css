@@ -325,6 +325,38 @@ body {
 .mini-btn svg { width: 14px; height: 14px; }
 .mini-btn span { margin-left: 4px; }
 
+/* 向量记忆设置：模型选择区 */
+.vm-model-box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+}
+.vm-model-name {
+  font-size: 13px;
+  color: var(--field-text);
+  background: var(--accent-soft);
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vm-model-select {
+  flex: 1;
+  min-width: 160px;
+  padding: 7px 9px;
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  background: var(--btn-bg);
+  color: var(--field-text);
+}
+
 /* 设置面板：右侧抽屉 + 遮罩（平滑滑入滑出） */
 .settings-overlay {
   position: fixed;

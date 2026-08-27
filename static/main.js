@@ -88,6 +88,106 @@ async function init() {
     localStorage.setItem(AUTO_COLLAPSE_KEY, autoCollapseInput.checked ? "1" : "0");
   });
 
+  // ------------------------- 向量记忆设置（模型选择/开关/N 条数） -------------------------
+  // 选取结果作为浏览器缓存；未选模型时只显示「添加向量化模型…」按钮
+  const renderVmModelBox = () => {
+    const box = $("#vmModelBox");
+    const modelId = vmLoadModel();
+    box.innerHTML = "";
+    if (!modelId) {
+      const btn = document.createElement("button");
+      btn.className = "mini-btn";
+      btn.type = "button";
+      btn.textContent = "添加向量化模型…";
+      btn.onclick = pickVmModel;
+      box.appendChild(btn);
+    } else {
+      const name = document.createElement("span");
+      name.className = "vm-model-name";
+      name.textContent = modelId.replace(/^models--/, "").replace("--", "/");
+      name.title = modelId;
+      const change = document.createElement("button");
+      change.className = "mini-btn";
+      change.type = "button";
+      change.textContent = "更换";
+      change.onclick = pickVmModel;
+      const remove = document.createElement("button");
+      remove.className = "mini-btn";
+      remove.type = "button";
+      remove.textContent = "移除";
+      remove.onclick = () => {
+        localStorage.removeItem(VM_MODEL_KEY);
+        localStorage.setItem(VM_ENABLED_KEY, "0");
+        renderVmModelBox();
+      };
+      box.appendChild(name);
+      box.appendChild(change);
+      box.appendChild(remove);
+    }
+    syncVmUi();
+  };
+
+  // 点击后从后端 models 目录读取可用模型，用户通过列表选取；没有则提示「暂无模型」
+  const pickVmModel = async () => {
+    let list = [];
+    try {
+      list = await apiGet("/api/vector-memory/models");
+    } catch (_) {
+      list = [];
+    }
+    if (!Array.isArray(list) || list.length === 0) {
+      showToast("暂无模型");
+      return;
+    }
+    const box = $("#vmModelBox");
+    box.innerHTML = "";
+    const sel = document.createElement("select");
+    sel.className = "vm-model-select";
+    const ph = document.createElement("option");
+    ph.value = "";
+    ph.textContent = "选择模型…";
+    sel.appendChild(ph);
+    list.forEach((m) => {
+      const o = document.createElement("option");
+      o.value = m.id;
+      o.textContent = m.label;
+      sel.appendChild(o);
+    });
+    sel.onchange = () => {
+      if (!sel.value) {
+        renderVmModelBox();
+        return;
+      }
+      localStorage.setItem(VM_MODEL_KEY, sel.value);
+      renderVmModelBox();
+    };
+    box.appendChild(sel);
+    sel.focus();
+  };
+
+  // 启用开关与 N 输入框：未选模型时置灰
+  const syncVmUi = () => {
+    const hasModel = !!vmLoadModel();
+    $("#vmEnabled").disabled = !hasModel;
+    $("#vmRecentN").disabled = !hasModel;
+    if (!hasModel) $("#vmEnabled").checked = false;
+  };
+
+  $("#vmEnabled").checked = vmLoadEnabled();
+  $("#vmEnabled").addEventListener("change", () => {
+    localStorage.setItem(VM_ENABLED_KEY, $("#vmEnabled").checked ? "1" : "0");
+  });
+  $("#vmRecentN").value = vmLoadN();
+  $("#vmRecentN").addEventListener("change", () => {
+    let v = parseInt($("#vmRecentN").value, 10);
+    if (isNaN(v)) v = VM_DEFAULT_N;
+    v = Math.max(1, Math.min(VM_N_MAX, v));
+    $("#vmRecentN").value = v;
+    localStorage.setItem(VM_N_KEY, v);
+  });
+  renderVmModelBox();
+  vmUpdateNMax();
+
   $("#clearKeyBtn").onclick = () => {
     saveApiKey("");
     $("#apiKeyInput").value = "";

@@ -34,6 +34,7 @@ from PIL import Image, ImageDraw, ImageFont
 import config
 import llm_client
 import storage
+import vector_memory
 
 app = Flask(__name__, static_folder="static")
 app.secret_key = os.environ.get("DSLITE_WEBUI_SECRET_KEY", config.SECRET_KEY)
@@ -266,12 +267,95 @@ def _validate_params(data):
     return out
 
 
+@app.route("/api/vector-memory/models")
+def api_vector_memory_models():
+    """列出后端 models/ 目录下可用的向量化模型（用户选取后前端缓存）。"""
+    return jsonify(vector_memory.list_available_models())
+
+
+def _truncate_long(user_messages):
+    """向量记忆关闭/不可用时：对话过长直接砍掉过早的消息（只留最近部分）。
+
+    system prompt 单独组装，不在此列表中，因此绝不会被砍掉。
+    """
+    chat = [
+        {"role": m["role"], "content": m["content"]}
+        for m in user_messages
+        if m.get("role") in ("user", "assistant") and (m.get("content") or "").strip()
+    ]
+    while (len(chat) > config.NO_VM_MAX_MESSAGES
+           or sum(len(m["content"]) for m in chat) > config.NO_VM_MAX_CHARS) and len(chat) > 1:
+        chat.pop(0)
+    return chat
+
+
+def _build_chat_context(user_messages, sid, data, username=None):
+    """拼接发给模型的对话上下文。
+
+    - 向量记忆开启（请求参数 vector_memory=true，需带 session_id 与已选向量化模型）：
+      先把会话消息增量索引到向量库，再返回「最近 N 条 + 向量检索 Top-K」。
+      模型加载失败抛 VectorMemoryError，由调用方转成错误响应（不静默忽略）。
+    - 关闭 / 无 session_id：原样透传，但对话过长时砍掉过早的消息。
+    """
+    enabled = config.VECTOR_MEMORY_ENABLED
+    if "vector_memory" in data:
+        enabled = bool(data.get("vector_memory"))
+
+    if not enabled or not sid:
+        return _truncate_long(user_messages)
+
+    model_dir = None
+    vm_model = str(data.get("vector_memory_model") or "").strip()
+    if vm_model:
+        model_dir = os.path.join("models", vm_model)
+
+    vm = vector_memory.get_instance(
+        db_path=config.VECTOR_MEMORY_DB,
+        model_dir=model_dir or vector_memory.MODEL_DIR,
+        device=config.VECTOR_MEMORY_DEVICE,
+        recent_n=config.VECTOR_MEMORY_RECENT_N,
+        top_k=config.VECTOR_MEMORY_TOP_K,
+        min_score=config.VECTOR_MEMORY_MIN_SCORE,
+    )
+    # 增量索引（内容哈希去重，幂等）：前端只发送已加载的最近分页，
+    # 更早的消息可能从未进入向量库，因此先以存储中的完整会话为准同步一次，
+    # 再补上本次请求中尚未落库的消息（如当前提问），确保早期内容也能被检索到。
+    if username and sid:
+        stored = storage.get_session(username, sid)
+        if stored:
+            vm.sync_session(sid, stored["messages"])
+    vm.sync_session(sid, user_messages)
+    # 检索查询取最后一条 user 消息（当前提问）
+    query = next(
+        (
+            m["content"]
+            for m in reversed(user_messages)
+            if m.get("role") == "user" and (m.get("content") or "").strip()
+        ),
+        "",
+    )
+    # 最近 N 条由用户自定义，但不得超过对话轮次总数（至少 1）
+    recent_n = config.VECTOR_MEMORY_RECENT_N
+    try:
+        recent_n = int(data.get("vector_memory_recent_n") or recent_n)
+    except (TypeError, ValueError):
+        pass
+    chat = [
+        m for m in user_messages
+        if m.get("role") in ("user", "assistant") and (m.get("content") or "").strip()
+    ]
+    rounds = sum(1 for m in chat if m.get("role") == "user")
+    recent_n = max(1, min(recent_n, max(1, rounds)))
+    return vm.build_history(user_messages, session_id=sid, query=query, recent_n=recent_n)
+
+
 @app.route("/api/chat", methods=["POST"])
 def api_chat():
     data = request.get_json(force=True, silent=True) or {}
     api_key = data.get("api_key")
     model = data.get("model")
     user_messages = data.get("messages", [])  # 前端传来的对话上下文（不含 system）
+    sid = data.get("session_id") or data.get("sessionId") or data.get("sid")
 
     if not api_key:
         return jsonify({"error": "缺少 api_key"}), 400
@@ -283,8 +367,12 @@ def api_chat():
     params = _validate_params(data)
 
     # 组装完整消息：system prompt 在前
-    messages = [{"role": "system", "content": params["system_prompt"]}]
-    messages += [{"role": m["role"], "content": m["content"]} for m in user_messages]
+    try:
+        context = _build_chat_context(user_messages, sid, data, session["username"])
+    except vector_memory.VectorMemoryError as e:
+        app.logger.error("向量记忆不可用：%s", e)
+        return jsonify({"error": f"向量记忆不可用：{e}", "vector_memory_error": True}), 502
+    messages = [{"role": "system", "content": params["system_prompt"]}] + context
 
     # 流式响应：用 text/event-stream 把每个片段推给前端
     def generate():

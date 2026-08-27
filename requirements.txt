@@ -1,3 +1,9 @@
 flask>=3.0
 requests>=2.31
 pillow>=10.0
+
+# 向量记忆（vector_memory.py）本地 embedding
+numpy>=1.26
+torch>=2.2
+sentence-transformers>=3.0
+transformers>=4.51

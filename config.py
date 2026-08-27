@@ -3,6 +3,8 @@
 新增模型只需在 SUPPORTED_MODELS 里加一项，前端会自动出现可选项。
 """
 
+import os
+
 # Flask 服务配置
 # 0.0.0.0 允许局域网内其他设备（如手机）访问；仅本机访问可改回 127.0.0.1
 HOST = "0.0.0.0"
@@ -68,3 +70,21 @@ STOP_MAX_LEN = 32
 
 # 请求模型 API 的超时时间（秒）
 REQUEST_TIMEOUT = 60
+
+# ------------------------- 向量记忆（长对话） -------------------------
+# 开启后，/api/chat 发给模型的对话历史 = 最近 VECTOR_MEMORY_RECENT_N 条
+# + 向量检索 VECTOR_MEMORY_TOP_K 条（本地 sentence-transformers + SQLite，无需外部 API）。
+# 前端在 /api/chat 请求里带 session_id 后才会真正生效。
+VECTOR_MEMORY_ENABLED = True
+VECTOR_MEMORY_DB = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "data", "vector_memory.db"
+)
+VECTOR_MEMORY_DEVICE = "auto"  # auto / cuda / mps / cpu
+VECTOR_MEMORY_RECENT_N = 10
+VECTOR_MEMORY_TOP_K = 5
+VECTOR_MEMORY_MIN_SCORE = 0.3
+
+# 向量记忆关闭/不可用时：上下文最多保留的消息条数与总字符数，
+# 超出的更早消息直接丢弃（system prompt 不在此限制内，始终保留）。
+NO_VM_MAX_MESSAGES = 30
+NO_VM_MAX_CHARS = 24000

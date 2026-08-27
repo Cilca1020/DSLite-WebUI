@@ -177,6 +177,7 @@ function resetChatUI() {
   sessionTotal = 0;
   sessionHasMore = false;
   sessionMinIndex = 0;
+  vmUpdateNMax(); // 空对话：N 上限重置
   const box = $("#chatBox");
   box.innerHTML = "";
   showEmptyHint(box); // 未选中对话时居中显示「你好」欢迎提示
@@ -238,6 +239,7 @@ async function openSession(id, opts = {}) {
   // 空会话（无消息）时居中显示欢迎提示，否则移除
   if (!box.querySelector(".msg-row")) showEmptyHint(box);
   else hideEmptyHint(box);
+  vmUpdateNMax(); // 依据会话轮次更新向量记忆 N 的上限
   refreshSessions();
   // 切换后清理其他空会话（保留当前正在查看的）
   await cleanupEmptySessions(currentSessionId);
@@ -266,6 +268,7 @@ async function loadOlderMessages() {
     });
     // 扩充模型上下文与分页状态
     conversation = msgs.map((m) => ({ role: m.role, content: m.content, files: m.files || null })).concat(conversation);
+    vmUpdateNMax(); // 加载更早消息后轮次增多，N 上限随之更新
     sessionHasMore = !!s.has_more;
     sessionMinIndex = msgs[0].index;
     // 顶部插入了新内容，滚动条整体下移：补偿 scrollTop，保持当前可视区域不动

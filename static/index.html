@@ -181,6 +181,30 @@
       </section>
 
       <section class="settings-group">
+        <h3>向量记忆</h3>
+        <div class="param-field">
+          <label>向量化模型</label>
+          <div id="vmModelBox" class="vm-model-box">
+            <button id="vmAddModelBtn" class="mini-btn" type="button">添加向量化模型…</button>
+          </div>
+          <span class="param-hint">长对话检索用的本地模型（后端 models 目录），选择结果保存在本浏览器。</span>
+        </div>
+        <div class="param-field">
+          <label for="vmEnabled">启用向量记忆</label>
+          <label class="switch-row" for="vmEnabled">
+            <input id="vmEnabled" type="checkbox" />
+            <span class="switch-track"><span class="switch-thumb"></span></span>
+          </label>
+          <span class="param-hint">短对话由你控制开关；对话超过最近 N 条后强制开启，避免早期内容被截断丢失。</span>
+        </div>
+        <div class="param-field">
+          <label for="vmRecentN">最近消息条数 N</label>
+          <input id="vmRecentN" type="number" min="1" max="50" step="1" />
+          <span class="param-hint">拼接上下文保留最近 N 条消息，N 不得超过当前对话轮次总数。</span>
+        </div>
+      </section>
+
+      <section class="settings-group">
         <h3>推理参数</h3>
         <div class="param-field">
           <label for="temperature">Temperature</label>
