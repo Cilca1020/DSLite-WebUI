@@ -18,6 +18,8 @@
   DELETE /api/presets/<name>   -> 删除预设
 """
 
+import colorsys
+import io
 import json
 import hmac
 import os
@@ -27,6 +29,7 @@ import secrets
 import string
 
 from flask import Flask, Response, jsonify, request, send_from_directory, session
+from PIL import Image, ImageDraw, ImageFont
 
 import config
 import llm_client
@@ -49,16 +52,100 @@ def auth_me():
     return jsonify({"authenticated": "username" in session, "username": session.get("username")})
 
 
+# 验证码字符集：剔除 0/O、1/I/L、2/Z、5/S、8/B 等易混淆字符
+CAPTCHA_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+CAPTCHA_LENGTH = 4
+_CAPTCHA_FONT_CANDIDATES = [
+    "C:/Windows/Fonts/arialbd.ttf",
+    "C:/Windows/Fonts/segoeuib.ttf",
+    "C:/Windows/Fonts/arial.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/System/Library/Fonts/Helvetica.ttc",
+]
+
+
+def _captcha_font(size):
+    """加载粗体字体，找不到则回退到 Pillow 内置字体。"""
+    for path in _CAPTCHA_FONT_CANDIDATES:
+        if os.path.exists(path):
+            return ImageFont.truetype(path, size)
+    return ImageFont.load_default(size=size)
+
+
+def _rand_color(rng, lo=30, hi=160):
+    return (rng.randint(lo, hi), rng.randint(lo, hi), rng.randint(lo, hi))
+
+
+def _char_color(rng):
+    """深色调、低饱和、色相随机的字符色。
+
+    用 HSV 控制：色相全色环随机（各字符颜色不同），但饱和度偏低、
+    明度统一偏深。与浅色背景形成明度差，色盲用户也能区分字符与背景。
+    """
+    h = rng.random()
+    s = rng.uniform(0.45, 0.7)
+    v = rng.uniform(0.38, 0.55)
+    r, g, b = colorsys.hsv_to_rgb(h, s, v)
+    return (int(r * 255), int(g * 255), int(b * 255))
+
+
+def _render_captcha(code, width=220, height=64):
+    """生成带彩色斑块背景、噪点、干扰曲线、字符旋转/抖动/随机大小的验证码图片。"""
+    rng = random.Random()
+    img = Image.new("RGB", (width, height))
+    draw = ImageDraw.Draw(img)
+    # 彩色马赛克斑块背景：打散底色，压低字符与背景的对比度
+    block = 8
+    for y in range(0, height, block):
+        for x in range(0, width, block):
+            t = x / width
+            base = (240 - int(10 * t), 243 - int(8 * t), 247 - int(14 * t))
+            offset = rng.randint(-26, 26)
+            fill = tuple(max(0, min(255, c + offset)) for c in base)
+            draw.rectangle((x, y, x + block - 1, y + block - 1), fill=fill)
+    # 随机噪点（颜色与字符相近，制造颗粒干扰）
+    for _ in range(int(width * height * 0.12)):
+        draw.point((rng.randint(0, width - 1), rng.randint(0, height - 1)),
+                   fill=_rand_color(rng, 90, 200))
+    # 贝塞尔干扰曲线
+    for _ in range(5):
+        color = _rand_color(rng, 100, 190)
+        pts = [
+            (rng.randint(-10, width // 4), rng.randint(0, height)),
+            (rng.randint(width // 4, width // 2), rng.randint(0, height)),
+            (rng.randint(width // 2, 3 * width // 4), rng.randint(0, height)),
+            (rng.randint(3 * width // 4, width + 10), rng.randint(0, height)),
+        ]
+        draw.line(pts, fill=color, width=rng.randint(1, 2), joint="curve")
+    # 随机小圆圈
+    for _ in range(8):
+        x, y = rng.randint(0, width), rng.randint(0, height)
+        r = rng.randint(2, 5)
+        draw.ellipse((x - r, y - r, x + r, y + r),
+                     outline=_rand_color(rng, 110, 180), width=1)
+    # 逐字符绘制：随机大小 / 旋转 / 上下抖动 / 深色调低饱和随机色
+    step = width / (len(code) + 1)
+    for i, ch in enumerate(code):
+        size = rng.randint(27, 33)
+        font = _captcha_font(size)
+        bbox = draw.textbbox((0, 0), ch, font=font)
+        mask = Image.new("L", (bbox[2] - bbox[0] + 10, bbox[3] - bbox[1] + 10), 0)
+        ImageDraw.Draw(mask).text((5 - bbox[0], 5 - bbox[1]), ch, font=font, fill=255)
+        mask = mask.rotate(rng.randint(-28, 28), expand=1, resample=Image.BICUBIC)
+        cx = int(step * (i + 1) - mask.width / 2)
+        cy = int(height / 2 - mask.height / 2 + rng.randint(-6, 6))
+        img.paste(Image.new("RGB", mask.size, _char_color(rng)), (cx, cy), mask)
+    return img
+
+
 @app.route("/api/auth/captcha")
 def auth_captcha():
-    code = "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(5))
+    code = "".join(secrets.choice(CAPTCHA_CHARS) for _ in range(CAPTCHA_LENGTH))
     session["captcha"] = code
-    random.seed(code)
-    colors = ["#2563eb", "#dc2626", "#059669", "#7c3aed", "#d97706"]
-    lines = "".join(f'<path d="M{random.randint(0,170)} {random.randint(8,52)} L{random.randint(20,190)} {random.randint(8,52)}" stroke="{random.choice(colors)}"/>' for _ in range(5))
-    chars = "".join(f'<text x="{18 + i * 34}" y="39" transform="rotate({random.randint(-18,18)} {18 + i * 34} 30)" fill="{random.choice(colors)}">{char}</text>' for i, char in enumerate(code))
-    svg = f'<svg xmlns="http://www.w3.org/2000/svg" width="190" height="58"><rect width="190" height="58" rx="8" fill="#f3f4f6"/>{lines}<g font-family="Arial,sans-serif" font-size="27" font-weight="700">{chars}</g></svg>'
-    return Response(svg, mimetype="image/svg+xml")
+    buf = io.BytesIO()
+    _render_captcha(code).save(buf, format="PNG")
+    return Response(buf.getvalue(), mimetype="image/png",
+                    headers={"Cache-Control": "no-store"})
 
 
 def _auth_form():
@@ -68,6 +155,8 @@ def _auth_form():
     captcha = str(data.get("captcha", "")).strip().upper()
     if not username or not password or not captcha:
         return None, (jsonify({"error": "请填写完整信息"}), 400)
+    if len(captcha) != CAPTCHA_LENGTH:
+        return None, (jsonify({"error": f"验证码需为 {CAPTCHA_LENGTH} 位"}), 400)
     if len(username) < 3 or len(username) > 32 or not username.replace("_", "").isalnum():
         return None, (jsonify({"error": "账号需为 3-32 位字母、数字或下划线"}), 400)
     if not hmac.compare_digest(captcha, session.pop("captcha", "")):
