@@ -371,6 +371,7 @@ body {
   transition: opacity 0.28s ease, visibility 0s;
 }
 .settings-overlay.hidden {
+  display: block !important; /* 覆盖 .hidden 的 display:none，让淡出过渡可运行 */
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
@@ -394,6 +395,7 @@ body {
   transition: transform 0.28s ease, visibility 0s;
 }
 .settings-panel.hidden {
+  display: flex !important; /* 覆盖 .hidden 的 display:none，让滑出过渡可运行 */
   transform: translateX(100%);
   visibility: hidden;
   pointer-events: none;
@@ -422,6 +424,29 @@ body {
   color: var(--text-sidebar-dim);
   margin-bottom: 10px;
   font-weight: 600;
+}
+/* 设置分组卡片化：独立底色/圆角 + 标题分隔线，各组不再混在一起。
+   浅色下去掉卡片边线，改用更深的设置面板底色衬托白卡；深色保留边框。 */
+.settings-group {
+  background: var(--btn-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 10px;
+  padding: 14px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+.settings-group > :last-child {
+  margin-bottom: 0; /* 底部间距统一由卡片 padding 提供，避免各分组参差/贴边 */
+}
+[data-theme="light"] .settings-group {
+  border: none;
+}
+[data-theme="light"] .settings-panel {
+  background: #eef0f3; /* 加深设置面板底色，衬托浅色下的无边框白卡 */
+}
+.settings-group h3 {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
 }
 .settings-group label {
   display: flex;

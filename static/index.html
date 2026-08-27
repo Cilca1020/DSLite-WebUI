@@ -193,12 +193,12 @@
             <input id="vmEnabled" type="checkbox" />
             <span class="switch-track"><span class="switch-thumb"></span></span>
           </label>
-          <span class="param-hint">短对话由你控制开关；对话超过最近 N 轮后强制开启，避免早期内容被截断丢失。</span>
+          <span class="param-hint">短对话由你控制开关；对话超过最近 N 轮后强制开启，避免早期内容被截断丢失。（可能会延长加载时间）</span>
         </div>
         <div class="param-field vm-collapsible" id="vmNField">
           <label for="vmRecentN">最近 N 轮对话</label>
           <input id="vmRecentN" type="number" min="1" max="1000" step="1" />
-          <span class="param-hint">保留最近 N 轮对话（一轮 = 一次提问 + 一次回答，上限 1000）；轮次 ≤ N 时全部保留，token 过多时自动砍掉最早的对话。</span>
+          <span class="param-hint">保留最近 N 轮对话（一轮 = 一次提问 + 一次回答，上限 1000）；轮次 ≤ N 时全部保留，token 过多时自动截掉最早的对话。</span>
         </div>
       </section>
 
