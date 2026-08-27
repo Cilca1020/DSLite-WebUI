@@ -23,7 +23,7 @@ function saveApiKey(k) {
 
 function loadApiKey() { return localStorage.getItem(LS_KEY) || ""; }
 
-// 确保存在当前会话：未选中任何对话时，用当前 UI 的 model + 参数创建新会话。
+// 确保存在当前会话：未选中任何对话时，用当前 UI 的 model + 参数 + 向量记忆设置创建新会话。
 // 创建后立即出现在侧栏，可在左侧跳转。已选中会话时直接返回。
 async function ensureSession() {
   if (currentSessionId) return currentSessionId;
@@ -31,10 +31,34 @@ async function ensureSession() {
   const s = await apiPost("/api/sessions", {
     model: model,
     params: readParamsFromUI(),
+    vm: {
+      enabled: vmLoadEnabled(),
+      model: vmLoadModel(),
+      recent_n: vmLoadN(),
+    },
   });
   currentSessionId = s.id;
   refreshSessions();
   return currentSessionId;
+}
+
+// 保存向量记忆设置到当前会话。仅改向量设置时**不新建对话**：
+// 未选中会话则只更新内存/缓存状态，待会话真正创建（发消息或改参数）时一并落库。
+async function saveVmSettings() {
+  if (!currentSessionId) return;
+  try {
+    await apiPost("/api/sessions/" + currentSessionId + "/config", {
+      model: $("#modelSelect").value,
+      params: readParamsFromUI(),
+      vm: {
+        enabled: vmLoadEnabled(),
+        model: vmLoadModel(),
+        recent_n: vmLoadN(),
+      },
+    });
+  } catch (_) {
+    /* 保存失败不影响对话 */
+  }
 }
 
 // 把当前 UI 上的 model + 推理参数保存到当前会话（每个对话一套独立配置）。
@@ -45,6 +69,12 @@ async function saveSessionConfig() {
   const cfg = {
     model: $("#modelSelect").value,
     params: readParamsFromUI(),
+    // 向量记忆设置随会话单独存储（不存浏览器）
+    vm: {
+      enabled: vmLoadEnabled(),
+      model: vmLoadModel(),
+      recent_n: vmLoadN(),
+    },
   };
   try {
     await apiPost("/api/sessions/" + currentSessionId + "/config", cfg);
@@ -177,7 +207,7 @@ function resetChatUI() {
   sessionTotal = 0;
   sessionHasMore = false;
   sessionMinIndex = 0;
-  vmUpdateNMax(); // 空对话：N 上限重置
+  applyVmToUI(null); // 新建对话：向量记忆默认关闭
   const box = $("#chatBox");
   box.innerHTML = "";
   showEmptyHint(box); // 未选中对话时居中显示「你好」欢迎提示
@@ -205,8 +235,9 @@ async function openSession(id, opts = {}) {
   const s = await apiGet("/api/sessions/" + id + "/messages?limit=" + PAGE_SIZE);
   if (!s || s.error) return;
   currentSessionId = id;
-  // 载入该会话独立的 model + 推理参数
+  // 载入该会话独立的 model + 推理参数 + 向量记忆设置
   applyConfigToUI(s.model, s.params);
+  applyVmToUI(s.vm);
   // content 始终是纯回答，直接用于模型上下文；reasoning 仅渲染；files 仅 user 消息携带。
   // 上下文仅包含已加载的消息，上滑加载更早消息后自动扩充。
   conversation = (s.messages || []).map((m) => ({ role: m.role, content: m.content, files: m.files || null }));
@@ -239,7 +270,6 @@ async function openSession(id, opts = {}) {
   // 空会话（无消息）时居中显示欢迎提示，否则移除
   if (!box.querySelector(".msg-row")) showEmptyHint(box);
   else hideEmptyHint(box);
-  vmUpdateNMax(); // 依据会话轮次更新向量记忆 N 的上限
   refreshSessions();
   // 切换后清理其他空会话（保留当前正在查看的）
   await cleanupEmptySessions(currentSessionId);
@@ -268,7 +298,6 @@ async function loadOlderMessages() {
     });
     // 扩充模型上下文与分页状态
     conversation = msgs.map((m) => ({ role: m.role, content: m.content, files: m.files || null })).concat(conversation);
-    vmUpdateNMax(); // 加载更早消息后轮次增多，N 上限随之更新
     sessionHasMore = !!s.has_more;
     sessionMinIndex = msgs[0].index;
     // 顶部插入了新内容，滚动条整体下移：补偿 scrollTop，保持当前可视区域不动

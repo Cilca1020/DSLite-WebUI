@@ -88,86 +88,66 @@ async function init() {
     localStorage.setItem(AUTO_COLLAPSE_KEY, autoCollapseInput.checked ? "1" : "0");
   });
 
-  // ------------------------- 向量记忆设置（模型选择/开关/N 条数） -------------------------
-  // 选取结果作为浏览器缓存；未选模型时只显示「添加向量化模型…」按钮
-  const renderVmModelBox = () => {
-    const box = $("#vmModelBox");
-    const modelId = vmLoadModel();
-    box.innerHTML = "";
-    if (!modelId) {
-      const btn = document.createElement("button");
-      btn.className = "mini-btn";
-      btn.type = "button";
-      btn.textContent = "添加向量化模型…";
-      btn.onclick = pickVmModel;
-      box.appendChild(btn);
-    } else {
-      const name = document.createElement("span");
-      name.className = "vm-model-name";
-      name.textContent = modelId.replace(/^models--/, "").replace("--", "/");
-      name.title = modelId;
-      const change = document.createElement("button");
-      change.className = "mini-btn";
-      change.type = "button";
-      change.textContent = "更换";
-      change.onclick = pickVmModel;
-      const remove = document.createElement("button");
-      remove.className = "mini-btn";
-      remove.type = "button";
-      remove.textContent = "移除";
-      remove.onclick = () => {
-        localStorage.removeItem(VM_MODEL_KEY);
-        localStorage.setItem(VM_ENABLED_KEY, "0");
-        renderVmModelBox();
-      };
-      box.appendChild(name);
-      box.appendChild(change);
-      box.appendChild(remove);
+  // ------------------------- 向量记忆设置（模型选择/开关/N，随会话单独存储） -------------------------
+  // 模型直接用下拉框选择（省去「添加向量化模型」按钮这一步）；列表来自后端 models 目录
+  let vmModelList = null; // 缓存可用模型列表
+
+  const refreshVmModels = async () => {
+    try {
+      vmModelList = await apiGet("/api/vector-memory/models");
+    } catch (_) {
+      vmModelList = [];
     }
-    syncVmUi();
+    if (!Array.isArray(vmModelList)) vmModelList = [];
+    renderVmModelBox();
   };
 
-  // 点击后从后端 models 目录读取可用模型，用户通过列表选取；没有则提示「暂无模型」
-  const pickVmModel = async () => {
-    let list = [];
-    try {
-      list = await apiGet("/api/vector-memory/models");
-    } catch (_) {
-      list = [];
-    }
-    if (!Array.isArray(list) || list.length === 0) {
-      showToast("暂无模型");
-      return;
-    }
+  const renderVmModelBox = () => {
     const box = $("#vmModelBox");
+    const list = vmModelList || [];
     box.innerHTML = "";
     const sel = document.createElement("select");
     sel.className = "vm-model-select";
-    const ph = document.createElement("option");
-    ph.value = "";
-    ph.textContent = "选择模型…";
-    sel.appendChild(ph);
+    sel.title = "选择向量化模型（随当前对话保存）";
+    // 占位项：未选择模型时显示「选择模型…」（选中即移除模型）；无可用模型时显示「暂无模型」
+    const off = document.createElement("option");
+    off.value = "";
+    off.textContent = list.length ? "选择模型…" : "暂无模型";
+    sel.appendChild(off);
+    const current = vmLoadModel();
     list.forEach((m) => {
       const o = document.createElement("option");
       o.value = m.id;
       o.textContent = m.label;
       sel.appendChild(o);
     });
-    sel.onchange = () => {
-      if (!sel.value) {
-        renderVmModelBox();
-        return;
+    if (current) {
+      // 当前会话已选模型即使不在列表里也保留选项，避免下拉框显示为空
+      if (!list.some((m) => m.id === current)) {
+        const o = document.createElement("option");
+        o.value = current;
+        o.textContent = current.replace(/^models--/, "").replace("--", "/");
+        sel.appendChild(o);
       }
-      localStorage.setItem(VM_MODEL_KEY, sel.value);
+      sel.value = current;
+    }
+    sel.onchange = () => {
+      vmSaveModel(sel.value); // 模型选择存到浏览器缓存；选「选择模型…」即移除
       renderVmModelBox();
+      saveVmSettings(); // 仅改向量设置：不新建对话
     };
     box.appendChild(sel);
-    sel.focus();
+    syncVmUi();
   };
+  window.renderVmModelBox = renderVmModelBox; // 供 applyVmToUI 在切换会话时刷新
 
-  // 启用开关与 N 输入框：未选模型时置灰
+  // 启用开关与 N 设置：未选模型时整行收起（带动画）
   const syncVmUi = () => {
     const hasModel = !!vmLoadModel();
+    const tf = $("#vmToggleField");
+    const nf = $("#vmNField");
+    if (tf) tf.classList.toggle("vm-hidden", !hasModel);
+    if (nf) nf.classList.toggle("vm-hidden", !hasModel);
     $("#vmEnabled").disabled = !hasModel;
     $("#vmRecentN").disabled = !hasModel;
     if (!hasModel) $("#vmEnabled").checked = false;
@@ -175,18 +155,20 @@ async function init() {
 
   $("#vmEnabled").checked = vmLoadEnabled();
   $("#vmEnabled").addEventListener("change", () => {
-    localStorage.setItem(VM_ENABLED_KEY, $("#vmEnabled").checked ? "1" : "0");
+    vmEnabled = $("#vmEnabled").checked;
+    saveVmSettings(); // 仅改向量设置：不新建对话
   });
   $("#vmRecentN").value = vmLoadN();
+  $("#vmRecentN").max = VM_N_MAX; // N 上限统一 1000，不做动态钳制
   $("#vmRecentN").addEventListener("change", () => {
     let v = parseInt($("#vmRecentN").value, 10);
     if (isNaN(v)) v = VM_DEFAULT_N;
     v = Math.max(1, Math.min(VM_N_MAX, v));
     $("#vmRecentN").value = v;
-    localStorage.setItem(VM_N_KEY, v);
+    vmRecentN = v;
+    saveVmSettings(); // 仅改向量设置：不新建对话
   });
-  renderVmModelBox();
-  vmUpdateNMax();
+  refreshVmModels(); // 初始加载模型列表（渲染为下拉框）
 
   $("#clearKeyBtn").onclick = () => {
     saveApiKey("");
@@ -198,6 +180,7 @@ async function init() {
     $("#settingsPanel").classList.remove("hidden");
     $("#settingsOverlay").classList.remove("hidden");
     $("#settingsPanel").setAttribute("aria-hidden", "false");
+    refreshVmModels(); // 打开设置时刷新模型列表（可能新增了模型）
   };
   const closeSettings = () => {
     writeParamsToUI(readParamsFromUI()); // 关闭前先把越界值回退

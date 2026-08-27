@@ -333,18 +333,6 @@ body {
   gap: 6px;
   min-height: 30px;
 }
-.vm-model-name {
-  font-size: 13px;
-  color: var(--field-text);
-  background: var(--accent-soft);
-  border: 1px solid var(--input-border);
-  border-radius: 6px;
-  padding: 5px 8px;
-  max-width: 200px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .vm-model-select {
   flex: 1;
   min-width: 160px;
@@ -355,6 +343,21 @@ body {
   font-family: inherit;
   background: var(--btn-bg);
   color: var(--field-text);
+}
+
+/* 向量记忆设置：开关与 N 两项随是否选择模型平滑展开/收起 */
+.vm-collapsible {
+  overflow: hidden;
+  max-height: 140px;
+  opacity: 1;
+  margin-bottom: 14px;
+  transition: max-height 0.28s ease, opacity 0.22s ease, margin-bottom 0.28s ease;
+}
+.vm-collapsible.vm-hidden {
+  max-height: 0;
+  opacity: 0;
+  margin-bottom: 0;
+  pointer-events: none;
 }
 
 /* 设置面板：右侧抽屉 + 遮罩（平滑滑入滑出） */

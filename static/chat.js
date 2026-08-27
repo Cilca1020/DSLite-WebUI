@@ -6,17 +6,24 @@ let activeAbortController = null;
 let isGenerating = false;
 
 // ------------------------- 向量记忆（长对话）前端状态 -------------------------
-// 选取结果保存在浏览器缓存（localStorage），后端只负责实际向量化与检索
-const VM_MODEL_KEY = "dsw_vm_model";
-const VM_ENABLED_KEY = "dsw_vm_enabled";
-const VM_N_KEY = "dsw_vm_recent_n";
+// 模型选择存在浏览器缓存（全局，不随会话切换）；启用开关与 N 按「对话」单独存储（后端 sessions.vm）。
+// 新建对话默认关闭（开关关、N=默认）。
 const VM_DEFAULT_N = 10; // N 默认值（对应后端 RECENT_N）
-const VM_N_MAX = 50; // N 输入上限
+const VM_N_MAX = 1000; // N 输入上限（轮次会变化，不做动态钳制）
+const VM_MODEL_KEY = "dsw_vm_model"; // 浏览器缓存键
+
+// 当前会话的向量记忆设置（openSession / resetChatUI 时从会话加载/重置）
+let vmEnabled = false;
+let vmRecentN = VM_DEFAULT_N;
 
 function vmLoadModel() { return localStorage.getItem(VM_MODEL_KEY) || ""; }
-function vmLoadEnabled() { return localStorage.getItem(VM_ENABLED_KEY) === "1"; }
+function vmSaveModel(model) {
+  if (model) localStorage.setItem(VM_MODEL_KEY, model);
+  else localStorage.removeItem(VM_MODEL_KEY);
+}
+function vmLoadEnabled() { return vmEnabled; }
 function vmLoadN() {
-  const v = parseInt(localStorage.getItem(VM_N_KEY) || "", 10);
+  const v = parseInt(vmRecentN, 10);
   return isNaN(v) ? VM_DEFAULT_N : Math.max(1, Math.min(VM_N_MAX, v));
 }
 
@@ -25,12 +32,7 @@ function vmRounds() {
   return conversation.filter((m) => m.role === "user" && (m.content || "").trim()).length;
 }
 
-// 生效的最近 N 轮：用户自定义值，但不得超过当前对话总轮数（至少 1）
-function vmEffectiveN() {
-  return Math.max(1, Math.min(vmLoadN(), Math.max(1, vmRounds())));
-}
-
-// 长对话判定：对话轮数超过用户设定的最近窗口 N，早期轮次会掉出窗口 -> 强制开启向量记忆
+// 长对话判定：对话轮数超过用户设定的 N，早期轮次会掉出窗口 -> 强制开启向量记忆
 function vmIsLong() {
   return vmRounds() > vmLoadN();
 }
@@ -40,20 +42,22 @@ function vmUse() {
   return !!vmLoadModel() && (vmLoadEnabled() || vmIsLong());
 }
 
-// 依据当前对话轮次更新设置面板中 N 的上限（N 不得超过总轮数）。
-// 无对话时不做钳制（保留用户设定），仅在有对话时按轮次限制。
-function vmUpdateNMax() {
-  const input = $("#vmRecentN");
-  if (!input) return;
-  const rounds = vmRounds();
-  const max = rounds > 0 ? Math.max(1, Math.min(VM_N_MAX, rounds)) : VM_N_MAX;
-  input.max = max;
-  const v = parseInt(input.value, 10);
-  if (!isNaN(v) && v > max) {
-    input.value = max;
-    localStorage.setItem(VM_N_KEY, max);
+// 把会话中的向量记忆设置应用到前端状态与设置面板（openSession/resetChatUI 调用）。
+// vm 为后端返回的 {enabled, model, recent_n}；null 表示新会话默认（关闭）。
+// 模型选择来自浏览器缓存（vmLoadModel），不随会话切换。
+function applyVmToUI(vm) {
+  vmEnabled = !!(vm && vm.enabled);
+  vmRecentN = (vm && vm.recent_n) || VM_DEFAULT_N;
+  if (window.renderVmModelBox) window.renderVmModelBox();
+  const en = $("#vmEnabled");
+  if (en) en.checked = vmEnabled;
+  const n = $("#vmRecentN");
+  if (n) {
+    n.value = vmLoadN();
+    n.max = VM_N_MAX;
   }
 }
+window.applyVmToUI = applyVmToUI;
 
 // 生成开始：发送按钮切换为「停止生成」按钮（仅生成期间显示）。
 // 纯文字「停止」与「发送」同为二字，宽度自然保持一致。
@@ -303,11 +307,11 @@ async function streamAssistant(userText, assistantEl, saveHistory, writeUser = t
           }),
         ...readParamsFromUI(),
         // 向量记忆：短对话由用户控制，长对话强制开启；
-        // 后端负责「最近 N 轮 + 向量检索 Top-K」拼接（N 不超过当前会话总轮数）
+        // 后端负责「最近 N 轮 + 向量检索 Top-K」拼接（轮次 ≤ N 时全部添加，token 过多砍最早）
         session_id: currentSessionId || undefined,
         vector_memory: vmUse(),
         vector_memory_model: vmLoadModel() || undefined,
-        vector_memory_recent_n: vmUse() ? vmEffectiveN() : undefined,
+        vector_memory_recent_n: vmUse() ? vmLoadN() : undefined,
       },
       (chunk) => {
         buffer += chunk;
@@ -602,7 +606,6 @@ async function sendMessage() {
     const res = await streamAssistant(text, assistantEl, true, true, files);
     if (res && (res.full || res.reasoning)) conversation.push({ role: "assistant", content: res.full });
     if (res && res.saved) sessionTotal++; // 后端已保存该 assistant 消息（含停止时的空消息）
-    vmUpdateNMax();
   } catch (e) {
     // 异常收尾：任何失败都要恢复发送按钮与生成状态
     activeAbortController = null;

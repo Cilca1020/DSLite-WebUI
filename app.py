@@ -352,6 +352,7 @@ def _build_chat_context(user_messages, sid, data, username=None):
         query=query,
         recent_rounds=n_rounds,
         full_messages=stored_msgs,
+        max_chars=config.NO_VM_MAX_CHARS,
     )
 
 
@@ -415,7 +416,8 @@ def api_create_session():
     title = data.get("title")
     model = data.get("model")
     params = data.get("params")
-    return jsonify(storage.create_session(session["username"], title, model=model, params=params))
+    vm = data.get("vm")
+    return jsonify(storage.create_session(session["username"], title, model=model, params=params, vm=vm))
 
 
 @app.route("/api/sessions/<sid>/config", methods=["POST"])
@@ -426,6 +428,7 @@ def api_update_session_config(sid):
         sid,
         model=data.get("model"),
         params=data.get("params"),
+        vm=data.get("vm"),
     )
     if saved_session is None:
         return jsonify({"error": "会话不存在"}), 404

@@ -469,8 +469,12 @@ class VectorMemory:
         min_score=None,
         recent_rounds=None,
         full_messages=None,
+        max_chars=None,
     ):
         """按“最近 N 轮对话 + 更早的向量检索结果（按轮次）”拼接对话历史。
+
+        对话轮次 ≤ N 时最近窗口包含全部消息（全部添加）；
+        max_chars 非空且拼接结果超出时，从最早的消息开始砍，直到字符数达标。
 
         messages:       本次请求的消息列表（含 role/content），用于最近窗口与输出。
         full_messages:  可选，存储中的完整会话消息列表。检索命中会按“轮次”
@@ -526,7 +530,12 @@ class VectorMemory:
         else:
             base = chat
         memory = self._expand_rounds(base, hits, recent_contents)
-        return memory + recent
+        result = memory + recent
+        # token 过多时砍掉最早的部分（至少保留最后一条，即当前提问）
+        if max_chars and max_chars > 0:
+            while len(result) > 1 and sum(len(m["content"]) for m in result) > max_chars:
+                result.pop(0)
+        return result
 
     def _expand_rounds(self, chat, hits, recent_contents):
         """把命中的单条消息展开为完整轮次（一轮 = 一条提问 + 紧随其后的回答），

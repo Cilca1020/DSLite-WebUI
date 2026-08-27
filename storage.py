@@ -55,6 +55,9 @@ def _init_db():
         columns = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
         if "auto_title_generated" not in columns:
             conn.execute("ALTER TABLE sessions ADD COLUMN auto_title_generated INTEGER NOT NULL DEFAULT 0")
+        if "vm" not in columns:
+            # 向量记忆设置（每会话独立，JSON: {"enabled": bool, "model": str, "recent_n": int}）
+            conn.execute("ALTER TABLE sessions ADD COLUMN vm TEXT")
 
 
 _init_db()
@@ -130,22 +133,52 @@ def change_password(username, current_password, new_password):
     return True
 
 
+def _parse_vm(raw):
+    """规范化向量记忆设置：{"enabled": bool, "model": str|None, "recent_n": int}。
+    接收 dict 或 JSON 字符串或 None；缺省为新会话默认（关闭、无模型、N=默认）。"""
+    default = {
+        "enabled": False,
+        "model": None,
+        "recent_n": config.VECTOR_MEMORY_RECENT_N,
+    }
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError):
+            return default
+    if not isinstance(raw, dict):
+        return default
+    try:
+        recent_n = max(1, min(int(raw.get("recent_n") or default["recent_n"]), 1000))
+    except (TypeError, ValueError):
+        recent_n = default["recent_n"]
+    return {
+        "enabled": bool(raw.get("enabled", False)),
+        "model": raw.get("model") or None,
+        "recent_n": recent_n,
+    }
+
+
 def _row_to_session(row):
     return {"id": row["id"], "title": row["title"], "created_at": row["created_at"],
             "updated_at": row["updated_at"], "model": row["model"],
             "params": json.loads(row["params"]) if row["params"] else None,
+            "vm": _parse_vm(row["vm"]),
             "messages": json.loads(row["messages"])}
 
 
-def create_session(username, title=None, model=None, params=None):
+def create_session(username, title=None, model=None, params=None, vm=None):
     now = time.time()
     session = {"id": _new_id(), "title": title or "会话 " + time.strftime("%m-%d %H:%M"),
-               "created_at": now, "updated_at": now, "model": model, "params": params, "messages": []}
+               "created_at": now, "updated_at": now, "model": model, "params": params,
+               "vm": _parse_vm(vm), "messages": []}
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO sessions(id, username, title, created_at, updated_at, model, params, messages) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO sessions(id, username, title, created_at, updated_at, model, params, messages, vm) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (session["id"], username, session["title"], now, now, model,
-             json.dumps(params, ensure_ascii=False), json.dumps([])),
+             json.dumps(params, ensure_ascii=False), json.dumps([]),
+             json.dumps(session["vm"], ensure_ascii=False)),
         )
     return session
 
@@ -186,6 +219,7 @@ def get_session_messages(username, sid, limit=30, before=None):
         "updated_at": session["updated_at"],
         "model": session["model"],
         "params": session["params"],
+        "vm": session.get("vm", _parse_vm(None)),
         "messages": [{"index": start + i, **m} for i, m in enumerate(page)],
         "total": total,
         "has_more": start > 0,
@@ -195,10 +229,12 @@ def get_session_messages(username, sid, limit=30, before=None):
 def _save_session(username, session):
     with _connect() as conn:
         conn.execute(
-            "UPDATE sessions SET title = ?, updated_at = ?, model = ?, params = ?, messages = ? WHERE id = ? AND username = ?",
+            "UPDATE sessions SET title = ?, updated_at = ?, model = ?, params = ?, messages = ?, vm = ? WHERE id = ? AND username = ?",
             (session["title"], session.get("updated_at", time.time()), session.get("model"),
              json.dumps(session.get("params"), ensure_ascii=False),
-             json.dumps(session.get("messages", []), ensure_ascii=False), session["id"], username),
+             json.dumps(session.get("messages", []), ensure_ascii=False),
+             json.dumps(session.get("vm", _parse_vm(None)), ensure_ascii=False),
+             session["id"], username),
         )
 
 
@@ -227,7 +263,7 @@ def auto_title_status(username, sid):
     return {"title": row["title"], "generated": bool(row["auto_title_generated"])}
 
 
-def update_session_config(username, sid, model=None, params=None):
+def update_session_config(username, sid, model=None, params=None, vm=None):
     session = get_session(username, sid)
     if session is None:
         return None
@@ -235,6 +271,8 @@ def update_session_config(username, sid, model=None, params=None):
         session["model"] = model
     if params is not None:
         session["params"] = params
+    if vm is not None:
+        session["vm"] = _parse_vm(vm)
     _save_session(username, session)
     return session
 
@@ -265,6 +303,8 @@ def rename_session(username, sid, title):
 
 
 def _is_user_configured(session):
+    # 仅按推理参数判断是否「已配置」；向量记忆设置（vm）不参与，
+    # 因此只有向量设置、无消息的空会话仍会被 cleanup_empty_sessions 清理。
     params = session.get("params") or {}
     return any(params.get(key) != default for key, default in config.DEFAULT_PARAMS.items())
 
