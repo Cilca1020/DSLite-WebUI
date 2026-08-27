@@ -274,7 +274,11 @@ body {
   align-items: center;
   gap: 6px;
 }
-/* 导入按钮：填充式图标在 16px 下偏小，单独放大 */
+/* 导入按钮：正方形、与「新建」等高（新建 32px），填充式图标在 16px 下偏小，单独放大 */
+.import-btn {
+  width: 32px;
+  height: 32px;
+}
 .import-btn svg {
   width: 18px;
   height: 18px;
