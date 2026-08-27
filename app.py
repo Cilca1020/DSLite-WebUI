@@ -435,6 +435,14 @@ def api_update_session_config(sid):
     return jsonify(saved_session)
 
 
+@app.route("/api/sessions/import", methods=["POST"])
+def api_import_session():
+    """按导出的 JSON 结构新建一个完整会话（与导出功能对应）。"""
+    data = request.get_json(force=True, silent=True) or {}
+    s = storage.import_session(session["username"], data)
+    return jsonify(s)
+
+
 @app.route("/api/sessions/<sid>")
 def api_get_session(sid):
     s = storage.get_session(session["username"], sid)

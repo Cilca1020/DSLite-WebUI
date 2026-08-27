@@ -50,10 +50,15 @@
       <div class="sidebar-section">
         <div class="sidebar-head">
           <span>会话</span>
-          <button id="newSessionBtn" class="icon-btn new-session-btn" title="新建会话">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
-            <span>新建</span>
-          </button>
+          <div class="sidebar-head-actions">
+            <button id="importSessionBtn" class="icon-btn import-btn" title="导入会话（JSON）">
+              <svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M11.75,11.189,19.47,3.47a.75.75,0,1,1,1.06,1.06l-7.719,7.72H16a.75.75,0,0,1,0,1.5H11a.753.753,0,0,1-.75-.75V8a.75.75,0,0,1,1.5,0ZM20,12.25a.75.75,0,0,0-.75.75v4c0,1.577-.673,2.25-2.25,2.25H7c-1.577,0-2.25-.673-2.25-2.25V7c0-1.577.673-2.25,2.25-2.25h4a.75.75,0,0,0,0-1.5H7A3.383,3.383,0,0,0,3.25,7V17A3.383,3.383,0,0,0,7,20.75H17A3.383,3.383,0,0,0,20.75,17V13A.75.75,0,0,0,20,12.25Z"/></svg>
+            </button>
+            <button id="newSessionBtn" class="icon-btn new-session-btn" title="新建会话">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+              <span>新建</span>
+            </button>
+          </div>
         </div>
         <ul id="sessionList" class="session-list"></ul>
       </div>

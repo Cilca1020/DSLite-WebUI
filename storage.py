@@ -277,6 +277,43 @@ def update_session_config(username, sid, model=None, params=None, vm=None):
     return session
 
 
+def import_session(username, data):
+    """按导出 JSON 的结构新建一个完整会话（标题、模型、参数、时间、消息）。
+    返回新会话；vm 缺省为关闭，与前端导入按钮对应导出文件结构。
+    """
+    now = time.time()
+    try:
+        created_at = float(data.get("created_at") or now)
+    except (TypeError, ValueError):
+        created_at = now
+    try:
+        updated_at = float(data.get("updated_at") or created_at or now)
+    except (TypeError, ValueError):
+        updated_at = created_at
+    title = data.get("title") or "会话 " + time.strftime("%m-%d %H:%M")
+    messages = [m for m in (data.get("messages") or []) if m.get("role") in ("user", "assistant")]
+    session = {
+        "id": _new_id(),
+        "title": title,
+        "created_at": created_at,
+        "updated_at": updated_at,
+        "model": data.get("model"),
+        "params": data.get("params"),
+        "vm": _parse_vm(data.get("vm")),
+        "messages": messages,
+    }
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO sessions(id, username, title, created_at, updated_at, model, params, messages, vm) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (session["id"], username, title, created_at, updated_at, session["model"],
+             json.dumps(session["params"], ensure_ascii=False),
+             json.dumps(messages, ensure_ascii=False),
+             json.dumps(session["vm"], ensure_ascii=False)),
+        )
+    return session
+
+
 def list_sessions(username):
     with _connect() as conn:
         rows = conn.execute(

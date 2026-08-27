@@ -226,6 +226,30 @@ async function newSession() {
   resetChatUI();
 }
 
+// 导入会话：读取用户选择的 JSON 文件（对应导出的 JSON 格式），新建会话并打开
+function onImportClick() {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".json,application/json";
+  input.onchange = async () => {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    try {
+      const data = JSON.parse(await file.text());
+      if (!data.messages || !Array.isArray(data.messages)) {
+        showToast("导入失败：JSON 缺少 messages 数组");
+        return;
+      }
+      const s = await apiPost("/api/sessions/import", data);
+      await openSession(s.id);
+      showToast("已导入会话「" + s.title + "」");
+    } catch (_) {
+      showToast("导入失败：无法解析 JSON 文件");
+    }
+  };
+  input.click();
+}
+
 // 打开会话：载入会话配置与历史消息并渲染
 // opts.suppressLatestMarkers=true 时跳过「最新一轮」标记的重新计算（保持 null）。
 // 用于编辑流程：删除最后一条后，倒数第二条会变成最后一条，若重新标记，

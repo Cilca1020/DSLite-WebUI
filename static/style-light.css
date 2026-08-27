@@ -268,6 +268,17 @@ body {
   white-space: nowrap;
 }
 .new-session-btn svg { flex: none; }
+/* 侧栏头部右侧操作按钮组：导入（正方形图标）+ 新建 */
+.sidebar-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+/* 导入按钮：填充式图标在 16px 下偏小，单独放大 */
+.import-btn svg {
+  width: 18px;
+  height: 18px;
+}
 /* 太阳图标（填充式）在 16px 下视觉偏小，单独放大 */
 .icon-btn .icon-sun { width: 20px; height: 20px; }
 /* 列表项内的小图标按钮 */

@@ -318,6 +318,7 @@ async function init() {
     input.selectionStart = input.selectionEnd = start + text.length;
   });
   $("#newSessionBtn").onclick = newSession;
+  $("#importSessionBtn").onclick = onImportClick;
   // 侧边栏收起/展开
   $("#toggleSidebarBtn").onclick = () => {
     const app = document.querySelector(".app");
