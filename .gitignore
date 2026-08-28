@@ -16,3 +16,5 @@ Dockerfile
 
 *.sh
 *.conf
+# 保留 nginx 配置模板供参考
+!nginx-dpsklite-webui.conf
