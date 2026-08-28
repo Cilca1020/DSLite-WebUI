@@ -30,6 +30,7 @@ import string
 
 from flask import Flask, Response, jsonify, request, send_from_directory, session
 from PIL import Image, ImageDraw, ImageFont
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 import config
 import llm_client
@@ -37,7 +38,11 @@ import storage
 import vector_memory
 
 app = Flask(__name__, static_folder="static")
+# 部署在 nginx 反向代理之后：信任其转发的 X-Forwarded-Proto / For / Host，
+# 使 request.is_secure 与 Cookie 安全标记等能正确感知 HTTPS 请求。
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 app.secret_key = os.environ.get("DSLITE_WEBUI_SECRET_KEY", config.SECRET_KEY)
+app.config["SESSION_COOKIE_SECURE"] = config.SESSION_COOKIE_SECURE
 
 
 @app.before_request
