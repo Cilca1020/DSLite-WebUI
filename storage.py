@@ -377,7 +377,10 @@ def append_message(username, sid, role, content, reasoning=None, files=None, int
     if reasoning is not None:
         message["reasoning"] = reasoning
     if files is not None:
-        message["files"] = [{"name": f.get("name", ""), "content": f.get("content", "")} for f in files]
+        # 保存 binary 标志：前端据此区分「文本文件(拼内容)」与「二进制附件(base64)」，
+        # 否则另一设备/重试时从后端恢复会把二进制文件误当作文本拼接。
+        message["files"] = [{"name": f.get("name", ""), "content": f.get("content", ""),
+                             "binary": bool(f.get("binary", False))} for f in files]
     if interrupted is not None:
         message["interrupted"] = bool(interrupted)
     session["messages"].append(message)
