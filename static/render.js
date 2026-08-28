@@ -4,7 +4,14 @@
 function renderMarkdown(el, text) {
   const src = (text || "").trim();
   // marked 输出末尾带一个格式化 \n，在 white-space:pre-wrap 容器（如思考块）中会被渲染成多余空行，故 trim
-  el.innerHTML = (window.marked ? marked.parse(src) : src).trim();
+  // 兼容 marked 对「中文/全角字符紧贴 ** 加粗符号」的边界识别失败（如 “主题为**内容**” 不渲染）：
+  // 在两者之间插入零宽空格 \u200B 让 marked 识别 strong，渲染后再移除。
+  const cjk = "\\u4e00-\\u9fff\\u3000-\\u303f\\uFF00-\\uFFEF\\u2018-\\u201D";
+  const srcSafe = src
+    .replace(new RegExp("([" + cjk + "])(\\*\\*)", "g"), "$1\u200B$2")
+    .replace(new RegExp("(\\*\\*)([" + cjk + "])", "g"), "$1\u200B$2");
+  const html = (window.marked ? marked.parse(srcSafe) : src).replace(/\u200B/g, "");
+  el.innerHTML = html.trim();
   if (!src) el.textContent = "";
   attachCodeCopy(el); // 渲染完成后为每个代码块附加"单独复制"按钮
 }
