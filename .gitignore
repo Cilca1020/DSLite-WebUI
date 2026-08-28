@@ -10,3 +10,6 @@ AGENT.md
 # 模型文件不入库，保留 .gitkeep 占位
 models/*
 !models/.gitkeep
+
+.dockerignore
+Dockerfile

@@ -548,6 +548,13 @@ body {
   color: var(--field-text);
   box-sizing: border-box;
 }
+/* 禁用态（如关闭向量记忆时 N 输入框）：明显置灰、不可点 */
+.param-field input:disabled {
+  color: #9aa0a6;
+  background: rgba(128, 128, 128, 0.14);
+  cursor: not-allowed;
+  opacity: 1;
+}
 .param-hint {
   display: block;
   margin-top: 4px;

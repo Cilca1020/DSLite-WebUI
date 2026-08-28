@@ -92,5 +92,20 @@ VECTOR_MEMORY_MIN_SCORE = 0.3
 
 # 向量记忆关闭/不可用时：上下文最多保留的消息条数与总字符数，
 # 超出的更早消息直接丢弃（system prompt 不在此限制内，始终保留）。
-NO_VM_MAX_MESSAGES = 30
+# 注意：字符数上限在 app.py 中会按所选模型上下文窗口动态估算（见 _no_vm_char_budget），
+# 这里的 NO_VM_MAX_CHARS 仅作未传入参数时的兜底值；NO_VM_MAX_MESSAGES 为安全条数硬上限。
+NO_VM_MAX_MESSAGES = 500
 NO_VM_MAX_CHARS = 24000
+
+# 各模型上下文窗口（token 数）。用于「关闭向量记忆」时，按所选模型 API 上下文窗口
+# 动态估算历史可保留的字符数（而非固定 30 条/24000 字符）。
+MODEL_CONTEXT_WINDOW = {
+    "deepseek-chat": 65536,
+    "deepseek-reasoner": 65536,
+}
+# 未在 MODEL_CONTEXT_WINDOW 配置的模型使用的默认上下文窗口（token 数）
+NO_VM_DEFAULT_WINDOW = 65536
+# token 到字符的保守估算：1 token ≈ 2 字符（中文场景偏保守，避免估算过头导致超出窗口报错）
+CHARS_PER_TOKEN = 2.0
+# 历史内容占「可用上下文」的比例，预留回复与 system prompt 及安全余量
+NO_VM_CONTEXT_RATIO = 0.75

@@ -200,7 +200,7 @@
             <input id="vmEnabled" type="checkbox" />
             <span class="switch-track"><span class="switch-thumb"></span></span>
           </label>
-          <span class="param-hint">短对话由你控制开关；对话超过最近 N 轮后强制开启，避免早期内容被截断丢失。（可能会延长加载时间）</span>
+          <span class="param-hint">关闭后不启用向量记忆，N 不生效，对话历史按模型上下文窗口截断，早期内容可能丢失。（对话中首次打开时，加载可能稍慢）</span>
         </div>
         <div class="param-field vm-collapsible" id="vmNField">
           <label for="vmRecentN">最近 N 轮对话</label>

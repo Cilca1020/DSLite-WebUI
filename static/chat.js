@@ -27,19 +27,10 @@ function vmLoadN() {
   return isNaN(v) ? VM_DEFAULT_N : Math.max(1, Math.min(VM_N_MAX, v));
 }
 
-// 当前对话轮次数（user 消息数）
-function vmRounds() {
-  return conversation.filter((m) => m.role === "user" && (m.content || "").trim()).length;
-}
-
-// 长对话判定：对话轮数超过用户设定的 N，早期轮次会掉出窗口 -> 强制开启向量记忆
-function vmIsLong() {
-  return vmRounds() > vmLoadN();
-}
-
-// 本次请求是否启用向量记忆：短对话由用户控制，长对话强制开启；需已选向量化模型
+// 本次请求是否启用向量记忆：严格由「启用向量记忆」开关控制；需已选向量化模型。
+// 关闭开关时完全不启用（N 不生效），长对话早期内容走「无向量记忆」的截断策略。
 function vmUse() {
-  return !!vmLoadModel() && (vmLoadEnabled() || vmIsLong());
+  return !!vmLoadModel() && vmLoadEnabled();
 }
 
 // 把会话中的向量记忆设置应用到前端状态与设置面板（openSession/resetChatUI 调用）。
@@ -58,6 +49,7 @@ function applyVmToUI(vm) {
   if (n) {
     n.value = vmLoadN();
     n.max = VM_N_MAX;
+    n.disabled = !vmEnabled; // 开关关闭时禁用 N 输入框
   }
 }
 window.applyVmToUI = applyVmToUI;
@@ -404,7 +396,7 @@ function buildChatPayload(sid) {
         return { role: m.role, content: m.content };
       }),
     ...readParamsFromUI(),
-    // 向量记忆：短对话由用户控制，长对话强制开启；
+    // 向量记忆：仅由「启用向量记忆」开关控制；关闭时不传 recent_n，后端忽略 N
     // 后端负责「最近 N 轮 + 向量检索 Top-K」拼接（轮次 ≤ N 时全部添加，token 过多砍最早）
     session_id: sid || undefined,
     vector_memory: vmUse(),

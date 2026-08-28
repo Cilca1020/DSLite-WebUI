@@ -149,13 +149,15 @@ async function init() {
     if (tf) tf.classList.toggle("vm-hidden", !hasModel);
     if (nf) nf.classList.toggle("vm-hidden", !hasModel);
     $("#vmEnabled").disabled = !hasModel;
-    $("#vmRecentN").disabled = !hasModel;
+    // N 仅在「已选模型且启用向量记忆」时可编辑；关闭开关或未选模型时禁用
+    $("#vmRecentN").disabled = !hasModel || !$("#vmEnabled").checked;
     if (!hasModel) $("#vmEnabled").checked = false;
   };
 
   $("#vmEnabled").checked = vmLoadEnabled();
   $("#vmEnabled").addEventListener("change", () => {
     vmEnabled = $("#vmEnabled").checked;
+    syncVmUi(); // 开关状态变化时，同步 N 输入框的禁用状态
     saveVmSettings(); // 仅改向量设置：不新建对话
   });
   $("#vmRecentN").value = vmLoadN();

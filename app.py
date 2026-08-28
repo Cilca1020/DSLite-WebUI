@@ -278,8 +278,21 @@ def api_vector_memory_models():
     return jsonify(vector_memory.list_available_models())
 
 
-def _truncate_long(user_messages):
-    """向量记忆关闭/不可用时：对话过长直接砍掉过早的消息（只留最近部分）。
+def _no_vm_char_budget(model, params):
+    """估算「关闭向量记忆」时历史最多可占用的字符数。
+
+    按所选模型 API 上下文窗口动态计算：可用 token = 上下文窗口 - 回复 max_tokens - system prompt，
+    再换算为字符数并留出安全余量；未配置窗口的模型回退到默认值。
+    """
+    window = config.MODEL_CONTEXT_WINDOW.get(model or "", config.NO_VM_DEFAULT_WINDOW)
+    max_tokens = int(params.get("max_tokens") or config.DEFAULT_PARAMS.get("max_tokens", 2048))
+    sys_tokens = len(params.get("system_prompt") or "") / config.CHARS_PER_TOKEN
+    avail_tokens = max(0, window - max_tokens - sys_tokens)
+    return int(avail_tokens * config.CHARS_PER_TOKEN * config.NO_VM_CONTEXT_RATIO)
+
+
+def _truncate_long(user_messages, model=None, params=None):
+    """向量记忆关闭/不可用时：按所选模型上下文窗口动态保留最近对话（只留最近部分）。
 
     system prompt 单独组装，不在此列表中，因此绝不会被砍掉。
     """
@@ -288,13 +301,14 @@ def _truncate_long(user_messages):
         for m in user_messages
         if m.get("role") in ("user", "assistant") and (m.get("content") or "").strip()
     ]
-    while (len(chat) > config.NO_VM_MAX_MESSAGES
-           or sum(len(m["content"]) for m in chat) > config.NO_VM_MAX_CHARS) and len(chat) > 1:
+    budget = _no_vm_char_budget(model, params) if params else config.NO_VM_MAX_CHARS
+    while (sum(len(m["content"]) for m in chat) > budget
+           or len(chat) > config.NO_VM_MAX_MESSAGES) and len(chat) > 1:
         chat.pop(0)
     return chat
 
 
-def _build_chat_context(user_messages, sid, data, username=None):
+def _build_chat_context(user_messages, sid, data, username=None, params=None):
     """拼接发给模型的对话上下文。
 
     - 向量记忆开启（请求参数 vector_memory=true，需带 session_id 与已选向量化模型）：
@@ -307,7 +321,7 @@ def _build_chat_context(user_messages, sid, data, username=None):
         enabled = bool(data.get("vector_memory"))
 
     if not enabled or not sid:
-        return _truncate_long(user_messages)
+        return _truncate_long(user_messages, data.get("model"), params)
 
     model_dir = None
     vm_model = str(data.get("vector_memory_model") or "").strip()
@@ -380,7 +394,7 @@ def api_chat():
 
     # 组装完整消息：system prompt 在前
     try:
-        context = _build_chat_context(user_messages, sid, data, session["username"])
+        context = _build_chat_context(user_messages, sid, data, session["username"], params)
     except vector_memory.VectorMemoryError as e:
         app.logger.error("向量记忆不可用：%s", e)
         return jsonify({"error": f"向量记忆不可用：{e}", "vector_memory_error": True}), 502
