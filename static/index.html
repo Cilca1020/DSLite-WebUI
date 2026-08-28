@@ -10,11 +10,7 @@
   <link rel="stylesheet" href="/static/style-light.css" />
   <link rel="stylesheet" href="/static/style-dark.css" />
   <link rel="stylesheet" href="/static/style-responsive.css" />
-  <!-- 文档解析库（用于将 pdf/docx/xlsx/pptx/odt 等二进制文档抽取为纯文本） -->
-  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <!-- 文档解析库改为由 body 底部统一动态加载（带失败自动重试） -->
   <!-- 防闪烁：在样式应用前先确定主题 -->
   <script>
     (function () {
@@ -245,17 +241,50 @@
     </div>
   </aside>
 
-  <script src="/static/vendor/marked.min.js"></script>
-  <script src="/static/vendor/highlight.min.js"></script>
-  <script src="/static/file_reader.js"></script>
-  <!-- 前端主逻辑按依赖顺序拆分加载：基础工具 → API → 渲染 → 会话 → 聊天 → 入口 -->
-  <script src="/static/icons.js"></script>
-  <script src="/static/api.js"></script>
-  <script src="/static/render.js"></script>
-  <script src="/static/sessions.js"></script>
-  <script src="/static/export.js"></script>
-  <script src="/static/chat.js"></script>
-  <script src="/static/auth.js"></script>
-  <script src="/static/main.js"></script>
+  <!-- 前端脚本统一动态加载（带失败自动重试，缓解网络不稳导致加载失败）。
+       顺序保持依赖关系：文档库 → 基础工具 → API → 渲染 → 会话 → 聊天 → 入口 -->
+  <script>
+    (function () {
+      var scripts = [
+        "/static/vendor/pdf.min.js",
+        "/static/vendor/mammoth.browser.min.js",
+        "/static/vendor/xlsx.full.min.js",
+        "/static/vendor/jszip.min.js",
+        "/static/vendor/marked.min.js",
+        "/static/vendor/highlight.min.js",
+        "/static/file_reader.js",
+        "/static/icons.js",
+        "/static/api.js",
+        "/static/render.js",
+        "/static/sessions.js",
+        "/static/export.js",
+        "/static/chat.js",
+        "/static/auth.js",
+        "/static/main.js"
+      ];
+      var maxTries = 5; // 单个脚本最多尝试次数
+      function load(src, n, done) {
+        var s = document.createElement("script");
+        s.src = src;
+        s.onload = function () { done(null); };
+        s.onerror = function () {
+          if (n > 1) {
+            setTimeout(function () { load(src, n - 1, done); }, 600);
+          } else {
+            done(new Error("脚本加载失败：" + src));
+          }
+        };
+        document.head.appendChild(s);
+      }
+      function next(i) {
+        if (i >= scripts.length) return;
+        load(scripts[i], maxTries, function (err) {
+          if (err) console.error(err);
+          next(i + 1);
+        });
+      }
+      next(0);
+    })();
+  </script>
 </body>
 </html>

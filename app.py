@@ -27,6 +27,7 @@ import random
 import re
 import secrets
 import string
+from datetime import timedelta
 
 from flask import Flask, Response, jsonify, request, send_from_directory, session
 from PIL import Image, ImageDraw, ImageFont
@@ -43,6 +44,15 @@ app = Flask(__name__, static_folder="static")
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 app.secret_key = os.environ.get("DSLITE_WEBUI_SECRET_KEY", config.SECRET_KEY)
 app.config["SESSION_COOKIE_SECURE"] = config.SESSION_COOKIE_SECURE
+# 持久化 session cookie：关闭浏览器 / 切换网络后仍保持登录 30 天
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
+
+
+@app.before_request
+def make_session_persistent():
+    # 让登录态跨浏览器会话 / 网络保持：session cookie 带 Max-Age（30 天），
+    # 关闭浏览器或切换网络时不会丢失登录状态。
+    session.permanent = True
 
 
 @app.before_request

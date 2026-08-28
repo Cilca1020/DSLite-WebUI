@@ -96,7 +96,7 @@
     if (ext === "pdf") {
       if (!window.pdfjsLib) throw new Error("pdf.js 未加载");
       window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-        "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+        "/static/vendor/pdf.worker.min.js";
       const pdf = await window.pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
       let out = "";
       for (let i = 1; i <= pdf.numPages; i++) {
