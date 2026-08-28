@@ -88,247 +88,358 @@ function stopGeneration() {
   if (activeAbortController) activeAbortController.abort();
 }
 
-// 流式请求助手回复并渲染到 assistantEl。userText 仅用于首次写入历史；
-// saveHistory=true 时会把 user+assistant 两条消息写入后端会话历史。
-// 返回 { full, reasoning } 供调用方更新内存 conversation。
-// writeUser=true 时额外把 user 消息写入历史（仅首次发送需要；重试时 user 已在历史中）。
-// files：该轮用户消息携带的文本文件（{name, content}），随 user 消息一起存入历史。
-async function streamAssistant(userText, assistantEl, saveHistory, writeUser = true, files = null) {
+/* ---------------- 流式输出的会话切换处理 ----------------
+ *
+ * 目标：某会话正在流式输出时切换到别的会话再切回来，原输出的状态不被
+ * 中断/重置，并确保切换过程不产生数据混乱或重复输出。
+ *
+ * 核心设计：
+ *  1. liveStreams 以「会话 id」为键保存每个进行中的流式请求状态
+ *     （controller、已累积的 full/reasoning、缓冲、model、payload、待存历史等），
+ *     会话归属在发起时用捕获的 sid 固化，绝不回读切换后的 currentSessionId。
+ *  2. 累积与渲染解耦：文本（full/reasoning/buffer）无论会话是否可见都持续累积；
+ *     DOM 渲染（气泡、增量 markdown、滚动、loading）仅在「该会话当前可见」时执行，
+ *     切走后只静默累积，避免把内容画到已被销毁的节点上。
+ *  3. 生命周期：openSession 切换会话时调用 syncLiveStreams(sid)：
+ *     - 离开的会话：仅标记 unmount（不 abort，输出继续在后台累积）；
+ *     - 回到的会话：根据已累积的 full/reasoning 重建气泡并继续渲染。
+ *  4. 落库与内存态（conversation/sessionTotal）更新仅在 sid === currentSessionId
+ *     时进行，防止把 A 的结果误写进 B；后端保存始终用捕获的 sid。
+ *  5. 完成后删除 liveStreams[sid]（数据已入库），之后 openSession 从后端正常
+ *     读取，不会重复追加气泡。
+ */
+
+// 进行中的流式请求注册表：sid -> liveStream 对象
+const liveStreams = {};
+
+// 助手气泡操作条显示（供初始渲染与恢复渲染共用），带滑入动画
+function showActionsForEl(assistantEl) {
+  const row = assistantEl && assistantEl.parentNode;
+  const bar = row && row.querySelector(".msg-actions");
+  if (bar) {
+    bar.style.display = "flex";
+    bar.classList.remove("msg-actions-in");
+    void bar.offsetWidth; // 强制重排，确保动画从头播放
+    bar.classList.add("msg-actions-in");
+  }
+  const box = $("#chatBox");
+  if (box) box.scrollTop = box.scrollHeight;
+}
+
+// 寻找 src[0, end) 中最后一个"块级安全断点"下标（不含则回退到 0）。
+// 安全断点定义：其后内容即便孤立即使 markdown 重解析也不会影响前面已定型块。
+function lastSafeBreak(src, end) {
+  const seg = src.slice(0, end);
+  // 代码围栏：未闭合的 ``` 之后不能断（避免把未闭合块提前定死）
+  const fenceRe = /```/g;
+  let fenceCount = 0, m;
+  while ((m = fenceRe.exec(seg)) !== null) fenceCount++;
+  if (fenceCount % 2 !== 0) {
+    // 存在未闭合代码块：断点必须在开场 ``` 之前
+    const open = seg.lastIndexOf("```");
+    return Math.max(0, open);
+  }
+  // 优先在「空行（段落边界）」处断开
+  let brk = seg.lastIndexOf("\n\n");
+  if (brk !== -1) return brk + 2; // 包含空行，下一段为草稿
+  // 其次在「行尾」断开（单行块如标题/列表项，整行写完整再定型）
+  const nl = seg.lastIndexOf("\n");
+  if (nl !== -1) return nl + 1;
+  return 0; // 仅一行且未结束：整段作为草稿
+}
+
+// 在 st 上创建（或重建）流式助手气泡的 DOM：assistantEl / answerDiv / draftNode / loadingEl。
+// 初始发送与恢复渲染共用；恢复时 renderedLen 归零，按当前累积的 full 整体重渲染。
+function buildLiveBubbles(st) {
+  st.assistantEl = addMsgEl("assistant", "", true, st.msgIndex, null, null, false);
+  st.answerDiv = document.createElement("div");
+  st.answerDiv.className = "msg-content";
+  st.assistantEl.appendChild(st.answerDiv);
+  st.draftNode = document.createElement("span");
+  st.draftNode.className = "md-draft";
+  st.draftNode.style.whiteSpace = "pre-wrap";
+  st.draftNode.style.wordBreak = "break-word";
+  st.draftAttached = false;
+  st.renderedLen = 0;
+  st.reasoningWrap = null;
+  st.reasoningBody = null;
+  st.loadingEl = document.createElement("div");
+  st.loadingEl.className = "msg-loading";
+  st.loadingEl.innerHTML = '<span class="spinner"></span><span class="msg-loading-text">思考中…</span>';
+  st.assistantEl.insertBefore(st.loadingEl, st.answerDiv);
+  const box = $("#chatBox");
+  if (box) box.scrollTop = box.scrollHeight;
+}
+
+// 推理过程折叠块：按需创建
+function liveEnsureReasoning(st) {
+  if (st.reasoningWrap) return st.reasoningWrap;
+  st.reasoningWrap = document.createElement("details");
+  st.reasoningWrap.className = "reasoning";
+  st.reasoningWrap.open = true;
+  const summary = document.createElement("summary");
+  summary.textContent = "思考过程";
+  st.reasoningBody = document.createElement("div");
+  st.reasoningBody.className = "reasoning-body";
+  st.reasoningWrap.appendChild(summary);
+  st.reasoningWrap.appendChild(st.reasoningBody);
+  st.assistantEl.insertBefore(st.reasoningWrap, st.assistantEl.firstChild);
+  return st.reasoningWrap;
+}
+
+function liveHideLoading(st) {
+  if (st.loadingEl && st.loadingEl.parentNode) st.loadingEl.remove();
+}
+
+// 把 [renderedLen, upto) 这一段增量渲染并追加为块（不触碰已渲染部分）
+function liveFlushRendered(st, upto) {
+  if (upto <= st.renderedLen) return;
+  const seg = st.full.slice(st.renderedLen, upto);
+  const html = (window.marked ? marked.parse(seg) : seg);
+  const tmp = document.createElement("div");
+  tmp.innerHTML = html;
+  attachCodeCopy(tmp); // 新定型的代码块立即附加"单独复制"按钮（幂等）
+  while (tmp.firstChild) {
+    if (st.draftAttached) st.answerDiv.insertBefore(tmp.firstChild, st.draftNode);
+    else st.answerDiv.appendChild(tmp.firstChild);
+  }
+  st.renderedLen = upto;
+}
+
+function liveRenderAnswer(st) {
+  if (!st.full) return;
+  const brk = lastSafeBreak(st.full, st.full.length);
+  liveFlushRendered(st, brk); // 把稳定前缀内的新完整块增量渲染
+  const draft = st.full.slice(st.renderedLen);
+  if (draft) {
+    if (!st.draftAttached) {
+      st.answerDiv.appendChild(st.draftNode);
+      st.draftAttached = true;
+    }
+    st.draftNode.textContent = draft;
+  } else if (st.draftAttached) {
+    st.draftNode.remove();
+    st.draftAttached = false;
+  }
+}
+
+// 渲染当前累积内容到 DOM（仅当该会话当前可见）。累积已在 liveAccumulate 完成。
+function liveRenderChunk(st) {
+  if (!st.mounted || st.sid !== currentSessionId) return;
+  liveHideLoading(st); // 收到首个内容块即移除加载动画
+  if (st.mode === "reasoning") {
+    liveEnsureReasoning(st);
+    st.reasoningBody.textContent = st.reasoning; // 流式实时显示纯文本
+  } else {
+    // 思考过程是否随正文输出自动收起由设置决定（默认收起；关闭设置后保持展开）
+    if (st.reasoning && st.reasoningWrap && st.reasoningWrap.open && window.getAutoCollapseReasoning()) {
+      st.reasoningWrap.open = false;
+    }
+    liveRenderAnswer(st); // 增量渲染：实时成型，已定型块不重绘
+  }
+  const box = $("#chatBox");
+  if (box) box.scrollTop = box.scrollHeight;
+}
+
+// 累积文本：无论会话是否可见都追加到 full/reasoning（不触碰 DOM）
+function liveAccumulate(st, text) {
+  if (!text) return;
+  if (st.mode === "reasoning") st.reasoning += text;
+  else st.full += text;
+}
+
+// 缓冲按标记切分：先累积，可见时再渲染（尾部不完整部分留到下次）
+function liveFlush(st) {
+  const MARK = "<<REASONING>>";
+  const MARK_A = "<<ANSWER>>";
+  const MAX_PREFIX = Math.max(MARK.length, MARK_A.length) - 1; // 可能形成标记的最大残留长度
+  // 在 buffer 中找最先出现的完整标记
+  const idxR = st.buffer.indexOf(MARK);
+  const idxA = st.buffer.indexOf(MARK_A);
+  let next = -1, nextMode = null;
+  if (idxR !== -1 && (idxA === -1 || idxR < idxA)) { next = idxR; nextMode = "reasoning"; }
+  else if (idxA !== -1) { next = idxA; nextMode = "answer"; }
+  if (next === -1) {
+    // 没有完整标记：把不可能再拼接成标记的安全前缀先累积渲染，保留末尾最多 MAX_PREFIX 个字符
+    if (st.buffer.length > MAX_PREFIX) {
+      const safeLen = st.buffer.length - MAX_PREFIX;
+      liveAccumulate(st, st.buffer.slice(0, safeLen));
+      liveRenderChunk(st);
+      st.buffer = st.buffer.slice(safeLen);
+    }
+    return;
+  }
+  // next 之前是上一段的延续文本（无新标记前缀），按当前 mode 处理
+  const before = st.buffer.slice(0, next);
+  if (before) {
+    liveAccumulate(st, before);
+    liveRenderChunk(st);
+  }
+  // 切换到新标记模式
+  st.mode = nextMode;
+  st.buffer = st.buffer.slice(next + (nextMode === "reasoning" ? MARK : MARK_A).length);
+  // 递归处理剩余 buffer（可能还含下一个标记）
+  liveFlush(st);
+}
+
+// 创建一次流式请求的状态对象。payload 在发起时（当前会话上下文下）构建并固化，
+// 避免切换会话后读到其它会话的 model / 参数 / 上下文。
+function createLiveStream({ sid, userText, files, writeUser, saveHistory, msgIndex, payload }) {
+  return {
+    sid,
+    userText: userText || "",
+    files: files || null,
+    writeUser,
+    saveHistory,
+    msgIndex,
+    payload,
+    controller: new AbortController(),
+    full: "",
+    reasoning: "",
+    buffer: "",
+    mode: "reasoning",
+    mounted: false,
+    finished: false,
+    saved: false,
+    // DOM 引用（mount 时重建）
+    assistantEl: null,
+    answerDiv: null,
+    draftNode: null,
+    draftAttached: false,
+    renderedLen: 0,
+    reasoningWrap: null,
+    reasoningBody: null,
+    loadingEl: null,
+  };
+}
+
+// 把进行中的流式状态重建为可见气泡（openSession 切回本会话时调用）。
+// 该轮 user 消息尚未落库，需一并恢复；assistant 气泡按已累积内容渲染。
+function mountLiveStream(st) {
+  if (!st || st.finished) return;
+  // 其它会话的流式请求标记为不可见（继续后台累积，不中断）
+  for (const k in liveStreams) {
+    if (k !== st.sid && liveStreams[k].mounted) {
+      liveStreams[k].mounted = false;
+      liveStreams[k].assistantEl = liveStreams[k].answerDiv = liveStreams[k].draftNode = liveStreams[k].loadingEl = null;
+    }
+  }
+  st.mounted = true;
+  const box = $("#chatBox");
+  hideEmptyHint(box);
+  // 恢复本轮的 user 气泡（尚未写入后端历史）
+  lastUserMsgIndex = sessionTotal;
+  addMsgEl("user", st.userText || "（已发送文件）", false, sessionTotal,
+    st.files && st.files.length ? st.files : null, null, false);
+  conversation.push({ role: "user", content: st.userText, files: st.files && st.files.length ? st.files : null });
+  sessionTotal++;
+  // 恢复 assistant 流式气泡
+  lastAssistantMsgIndex = sessionTotal;
+  st.msgIndex = sessionTotal;
+  buildLiveBubbles(st);
+  if (st.reasoning) { liveEnsureReasoning(st); renderMarkdown(st.reasoningBody, st.reasoning); }
+  if (st.full) liveRenderAnswer(st);
+  if (st.reasoning || st.full) liveHideLoading(st);
+  box.scrollTop = box.scrollHeight;
+}
+
+// 会话切换后的流式状态同步：
+// activeSid 为当前可见会话 id；为 null 表示未选中任何会话。
+// 可见会话的进行中请求重建气泡；其它会话仅标记不可见（不中断）。
+function syncLiveStreams(activeSid) {
+  for (const k in liveStreams) {
+    const st = liveStreams[k];
+    if (st.finished) continue; // 已完成且已入库，openSession 从后端读取即可
+    if (k === activeSid) {
+      // 本会话成为当前会话：openSession 已清空容器并重绘历史，故始终重建其进行中气泡。
+      // （即便此前已 mounted，也要重建——容器内容已被清空。）
+      mountLiveStream(st);
+    } else if (st.mounted) {
+      st.mounted = false;
+      st.assistantEl = st.answerDiv = st.draftNode = st.loadingEl = null;
+    }
+  }
+}
+window.syncLiveStreams = syncLiveStreams;
+
+// 终止某个会话的进行中流式请求（删除会话时调用），并移除注册表项
+function abortLiveStream(sid) {
+  const st = liveStreams[sid];
+  if (!st) return;
+  try { st.controller.abort(); } catch (_) {}
+  delete liveStreams[sid];
+}
+window.abortLiveStream = abortLiveStream;
+
+// 在发起时固化请求 payload：model / 参数 / 会话上下文在调用时刻读取，
+// 确保切换会话后本请求仍携带原会话的配置与上下文。
+function buildChatPayload(sid) {
+  return {
+    api_key: loadApiKey(),
+    model: $("#modelSelect").value,
+    // 把用户消息携带的文本文件内容拼接到对应 user 的 content 中，
+    // 使模型能看到文件内容（files 本身不作为独立消息）
+    messages: conversation
+      // 过滤空内容的助手消息（被停止时保存的空消息），避免污染模型上下文
+      .filter((m) => !(m.role === "assistant" && !(m.content || "").trim()))
+      .map((m) => {
+        if (m.role === "user" && m.files && m.files.length) {
+          const appended = m.files
+            .map((f) => {
+              if (f.binary) {
+                // 二进制办公文档：以 base64 附件形式标注（文本模型仅能识别为附件）
+                return `\n\n--- 附件（二进制，${f.name}，${f.content.length} 字节 base64）：请知悉该文件为二进制文档，无法在此直接解析内容 ---`;
+              }
+              return `\n\n--- 文件内容：${f.name} ---\n${f.content}`;
+            })
+            .join("");
+          return { role: "user", content: (m.content || "") + appended };
+        }
+        return { role: m.role, content: m.content };
+      }),
+    ...readParamsFromUI(),
+    // 向量记忆：短对话由用户控制，长对话强制开启；
+    // 后端负责「最近 N 轮 + 向量检索 Top-K」拼接（轮次 ≤ N 时全部添加，token 过多砍最早）
+    session_id: sid || undefined,
+    vector_memory: vmUse(),
+    vector_memory_model: vmLoadModel() || undefined,
+    vector_memory_recent_n: vmUse() ? vmLoadN() : undefined,
+  };
+}
+
+// 执行流式请求：fetch + 缓冲切分 + 累积 + 可见时渲染 + 收尾落库。
+// 返回 { full, reasoning, saved }。落库与会话计数用捕获的 sid，绝不回读切换后的会话。
+async function runLiveStream(st) {
   const apiKey = loadApiKey();
   if (!apiKey) {
-    assistantEl.textContent = "[错误] 请先点击右上角设置按钮，在设置面板中输入 API Key";
+    if (st.mounted) st.assistantEl.textContent = "[错误] 请先点击右上角设置按钮，在设置面板中输入 API Key";
+    st.finished = true;
+    delete liveStreams[st.sid];
     return null;
   }
-  const model = $("#modelSelect").value;
-
-  // 停止控制：为本次流式请求创建中止控制器，并把发送按钮切换为「停止」
-  const controller = new AbortController();
-  activeAbortController = controller;
+  // 停止控制：为本次流式请求绑定中止控制器，并把发送按钮切换为「停止」
+  activeAbortController = st.controller;
   isGenerating = true;
   enterGeneratingState();
   let aborted = false; // 是否被用户停止生成（气泡将标记为截断）
 
-  // 推理过程折叠块：默认不创建，仅当真正收到 reasoning 内容时才按需创建
-  let reasoningWrap = null;
-  let reasoningBody = null;
-  const ensureReasoning = () => {
-    if (reasoningWrap) return reasoningWrap;
-    reasoningWrap = document.createElement("details");
-    reasoningWrap.className = "reasoning";
-    reasoningWrap.open = true;
-    const summary = document.createElement("summary");
-    summary.textContent = "思考过程";
-    reasoningBody = document.createElement("div");
-    reasoningBody.className = "reasoning-body";
-    reasoningWrap.appendChild(summary);
-    reasoningWrap.appendChild(reasoningBody);
-    assistantEl.insertBefore(reasoningWrap, assistantEl.firstChild);
-    return reasoningWrap;
-  };
-
-  let full = "";
-  let reasoning = "";
-  let mode = "reasoning"; // 当前渲染模式：reasoning / answer
-  // 累积缓冲：网络分包可能把标记切开，或把多个标记拼在一起，
-  // 必须按标记边界切分，只处理完整片段，尾部不完整部分留到下次。
-  let buffer = "";
-  const MARK = "<<REASONING>>";
-  const MARK_A = "<<ANSWER>>";
-  const MAX_PREFIX = Math.max(MARK.length, MARK_A.length) - 1; // 可能形成标记的最大残留长度
-  const flush = () => {
-    // 在 buffer 中找最先出现的完整标记
-    const idxR = buffer.indexOf(MARK);
-    const idxA = buffer.indexOf(MARK_A);
-    let next = -1;
-    let nextMode = null;
-    if (idxR !== -1 && (idxA === -1 || idxR < idxA)) {
-      next = idxR; nextMode = "reasoning";
-    } else if (idxA !== -1) {
-      next = idxA; nextMode = "answer";
-    }
-    if (next === -1) {
-      // buffer 中没有完整标记：把不可能再拼接成标记的安全前缀先渲染，
-      // 保留末尾最多 MAX_PREFIX 个字符（可能是被切开的标记的一部分）。
-      if (buffer.length > MAX_PREFIX) {
-        const safeLen = buffer.length - MAX_PREFIX;
-        applyChunk(buffer.slice(0, safeLen));
-        buffer = buffer.slice(safeLen);
-      }
-      return;
-    }
-    // next 之前是上一段的延续文本（无新标记前缀），按当前 mode 处理
-    const before = buffer.slice(0, next);
-    if (before) applyChunk(before);
-    // 切换到新标记模式
-    mode = nextMode;
-    buffer = buffer.slice(next + (nextMode === "reasoning" ? MARK : MARK_A).length);
-    // 递归处理剩余 buffer（可能还含下一个标记）
-    flush();
-  };
-  // 正文容器：markdown 渲染只作用于此，不影响思考折叠块
-  const answerDiv = document.createElement("div");
-  answerDiv.className = "msg-content";
-  assistantEl.appendChild(answerDiv);
-
-  // 流式输出未开始前，气泡内显示"加载中"动画（收到首个内容块即移除）
-  const loadingEl = document.createElement("div");
-  loadingEl.className = "msg-loading";
-  loadingEl.innerHTML = '<span class="spinner"></span><span class="msg-loading-text">思考中…</span>';
-  assistantEl.insertBefore(loadingEl, answerDiv);
-  // 加载动画插入会撑高气泡，立即滚动置底（否则加载期间滚动条停在上方）
-  $("#chatBox").scrollTop = $("#chatBox").scrollHeight;
-  const hideLoading = () => {
-    if (loadingEl && loadingEl.parentNode) loadingEl.remove();
-  };
-  // 流式输出结束后才显示助手气泡操作条（复制/重试/删除等），带滑入动画
-  const showActions = () => {
-    const row = assistantEl.parentNode;
-    const bar = row && row.querySelector(".msg-actions");
-    if (bar) {
-      bar.style.display = "flex";
-      bar.classList.remove("msg-actions-in");
-      void bar.offsetWidth; // 强制重排，确保动画从头播放
-      bar.classList.add("msg-actions-in");
-    }
-    // 操作条显示会撑高消息行，滚动到底部让新内容完整可见
-    $("#chatBox").scrollTop = $("#chatBox").scrollHeight;
-  };
-
-  // ---- 企业级增量渲染：已定型块永久固定，仅末尾"未闭合草稿"以纯文本显示 ----
-  // 设计：answerDiv 内由「已渲染的块元素们」+「一个草稿 span 节点」组成。
-  // 每当累积文本越过一个"块级安全断点"，就把 [renderedLen, 断点) 这一段
-  // 增量渲染并 append（旧块不重绘），其余末尾不稳定的内容放进草稿节点。
-  let renderedLen = 0; // 已经被定型渲染到 answerDiv 的稳定前缀长度
-  const draftNode = document.createElement("span"); // 末尾未成型草稿（纯文本，非等宽/非框）
-  draftNode.className = "md-draft";
-  draftNode.style.whiteSpace = "pre-wrap";
-  draftNode.style.wordBreak = "break-word";
-  let draftAttached = false;
-
-  // 寻找 src[0, end) 中最后一个"块级安全断点"下标（不含则回退到 0）。
-  // 安全断点定义：其后内容即便孤立即使 markdown 重解析也不会影响前面已定型块。
-  function lastSafeBreak(src, end) {
-    const seg = src.slice(0, end);
-    // 代码围栏：未闭合的 ``` 之后不能断（避免把未闭合块提前定死）
-    const fenceRe = /```/g;
-    let fenceCount = 0, m;
-    while ((m = fenceRe.exec(seg)) !== null) fenceCount++;
-    if (fenceCount % 2 !== 0) {
-      // 存在未闭合代码块：断点必须在开场 ``` 之前
-      const open = seg.lastIndexOf("```");
-      return Math.max(0, open);
-    }
-    // 优先在「空行（段落边界）」处断开
-    let brk = seg.lastIndexOf("\n\n");
-    if (brk !== -1) return brk + 2; // 包含空行，下一段为草稿
-    // 其次在「行尾」断开（单行块如标题/列表项，整行写完整再定型）
-    const nl = seg.lastIndexOf("\n");
-    if (nl !== -1) return nl + 1;
-    return 0; // 仅一行且未结束：整段作为草稿
-  }
-
-  // 把 [renderedLen, upto) 这一段增量渲染并追加为块（不触碰已渲染部分）
-  function flushRendered(upto) {
-    if (upto <= renderedLen) return;
-    const seg = full.slice(renderedLen, upto);
-    const html = (window.marked ? marked.parse(seg) : seg);
-    const tmp = document.createElement("div");
-    tmp.innerHTML = html;
-    attachCodeCopy(tmp); // 新定型的代码块立即附加"单独复制"按钮（幂等）
-    // 草稿节点若已挂到 answerDiv 则插到其前，否则直接追加（避免 insertBefore 目标不在树中报错）
-    while (tmp.firstChild) {
-      if (draftAttached) answerDiv.insertBefore(tmp.firstChild, draftNode);
-      else answerDiv.appendChild(tmp.firstChild);
-    }
-    renderedLen = upto;
-  }
-
-  function renderAnswer() {
-    if (!full) return;
-    const brk = lastSafeBreak(full, full.length);
-    flushRendered(brk); // 把稳定前缀内的新完整块增量渲染
-    // 剩余草稿（可能为空）放进纯文本节点
-    const draft = full.slice(renderedLen);
-    if (draft) {
-      if (!draftAttached) {
-        answerDiv.appendChild(draftNode);
-        draftAttached = true;
-      }
-      draftNode.textContent = draft;
-    } else if (draftAttached) {
-      draftNode.remove();
-      draftAttached = false;
-    }
-  }
-
-  const applyChunk = (text) => {
-    if (!text) return;
-    hideLoading(); // 收到首个内容块即移除加载动画
-    if (mode === "reasoning") {
-      reasoning += text;
-      ensureReasoning();
-      reasoningBody.textContent = reasoning; // 流式实时显示纯文本
-    } else {
-      // 思考过程是否随正文输出自动收起由设置决定（默认收起；关闭设置后保持展开）
-      if (
-        reasoning &&
-        reasoningWrap &&
-        reasoningWrap.open &&
-        window.getAutoCollapseReasoning()
-      ) {
-        reasoningWrap.open = false;
-      }
-      full += text;
-      renderAnswer(); // 增量渲染：实时成型，已定型块不重绘
-    }
-    $("#chatBox").scrollTop = $("#chatBox").scrollHeight;
-  };
   try {
-    await streamChat(
-      {
-        api_key: apiKey,
-        model,
-        // 把用户消息携带的文本文件内容拼接到对应 user 的 content 中，
-        // 使模型能看到文件内容（files 本身不作为独立消息）
-        messages: conversation
-          // 过滤空内容的助手消息（被停止时保存的空消息），避免污染模型上下文
-          .filter((m) => !(m.role === "assistant" && !(m.content || "").trim()))
-          .map((m) => {
-            if (m.role === "user" && m.files && m.files.length) {
-              const appended = m.files
-                .map((f) => {
-                  if (f.binary) {
-                    // 二进制办公文档：以 base64 附件形式标注（文本模型仅能识别为附件）
-                    return `\n\n--- 附件（二进制，${f.name}，${f.content.length} 字节 base64）：请知悉该文件为二进制文档，无法在此直接解析内容 ---`;
-                  }
-                  return `\n\n--- 文件内容：${f.name} ---\n${f.content}`;
-                })
-                .join("");
-              return { role: "user", content: (m.content || "") + appended };
-            }
-            return { role: m.role, content: m.content };
-          }),
-        ...readParamsFromUI(),
-        // 向量记忆：短对话由用户控制，长对话强制开启；
-        // 后端负责「最近 N 轮 + 向量检索 Top-K」拼接（轮次 ≤ N 时全部添加，token 过多砍最早）
-        session_id: currentSessionId || undefined,
-        vector_memory: vmUse(),
-        vector_memory_model: vmLoadModel() || undefined,
-        vector_memory_recent_n: vmUse() ? vmLoadN() : undefined,
-      },
-      (chunk) => {
-        buffer += chunk;
-        flush();
-      },
-      controller.signal
-    );
+    await streamChat(st.payload, (chunk) => {
+      st.buffer += chunk;
+      liveFlush(st);
+    }, st.controller.signal);
   } catch (e) {
     // 用户主动停止（AbortError）不视为错误：保留已生成内容，走下方共用收尾
     if (e && e.name === "AbortError") {
       aborted = true;
     } else {
-      hideLoading(); // 异常时移除加载动画；输出已结束（失败），同样显示操作条
-      showActions();
+      // 异常时移除加载动画；输出已结束（失败），同样显示操作条
+      if (st.mounted) { liveHideLoading(st); showActionsForEl(st.assistantEl); }
+      st.finished = true;
+      activeAbortController = null;
+      isGenerating = false;
+      exitGeneratingState();
+      delete liveStreams[st.sid];
       throw e;
     }
   }
@@ -338,56 +449,59 @@ async function streamAssistant(userText, assistantEl, saveHistory, writeUser = t
   exitGeneratingState();
 
   // 流结束后处理残留缓冲
-  if (buffer) {
-    applyChunk(buffer);
-    buffer = "";
+  if (st.buffer) {
+    liveAccumulate(st, st.buffer);
+    st.buffer = "";
+    liveRenderChunk(st);
   }
-  hideLoading(); // 流结束兜底移除加载动画（即使未收到任何内容块）
-  showActions(); // 流式输出结束后再显示操作条
-  // 收尾：把剩余草稿也定型渲染，移除纯文本草稿节点（不整段重渲染，已定型块不动）
-  flushRendered(full.length);
-  if (draftAttached) {
-    draftNode.remove();
-    draftAttached = false;
+  // 收尾渲染（仅当本会话当前可见）：定型剩余草稿、显示操作条、标记截断
+  if (st.mounted && st.sid === currentSessionId) {
+    liveHideLoading(st); // 流结束兜底移除加载动画
+    showActionsForEl(st.assistantEl); // 流式输出结束后再显示操作条
+    liveFlushRendered(st, st.full.length);
+    if (st.draftAttached) { st.draftNode.remove(); st.draftAttached = false; }
+    if (st.reasoning && st.reasoningBody) renderMarkdown(st.reasoningBody, st.reasoning);
+    st.assistantEl._rawText = st.full; // 供"复制为 Markdown"使用
+    if (aborted) markInterrupted(st.assistantEl, !!(st.full || st.reasoning));
   }
-  // 思考过程仍为纯文本（模型以纯文本输出），流结束定型一次
-  if (reasoning && reasoningBody) renderMarkdown(reasoningBody, reasoning);
-  // 流式结束后保存原始 markdown 源，供"复制为 Markdown"使用
-  assistantEl._rawText = full;
-  // 被用户停止时追加灰色提示：有内容显示在气泡下方，无内容显示在气泡内占位
-  if (aborted) markInterrupted(assistantEl, !!(full || reasoning));
-  // 存历史：content 存纯回答（用于渲染+上传），reasoning 单独存（仅渲染）
+  // 落库：始终写入发起时捕获的 sid
   let savedAssistant = false; // 本次是否把 assistant 消息写入了后端历史
-  if (saveHistory && currentSessionId) {
-    if (writeUser)
-      await apiPost("/api/sessions/" + currentSessionId + "/msg", {
+  if (st.saveHistory && st.sid) {
+    if (st.writeUser) {
+      await apiPost("/api/sessions/" + st.sid + "/msg", {
         role: "user",
-        content: userText,
-        files: files && files.length ? files : undefined,
+        content: st.userText,
+        files: st.files && st.files.length ? st.files : undefined,
       });
+    }
     // 保存助手消息：被停止且无输出时也保存空消息并标记 interrupted，
     // 使刷新/重开后仍能看到「回答已中断」提示（发送上下文时会被过滤）；
     // 正常结束但内容为空则不保存，避免产生无意义空气泡。
-    if (full || reasoning || aborted) {
-      await apiPost("/api/sessions/" + currentSessionId + "/msg", {
+    if (st.full || st.reasoning || aborted) {
+      await apiPost("/api/sessions/" + st.sid + "/msg", {
         role: "assistant",
-        content: full,
-        reasoning: reasoning || undefined,
+        content: st.full,
+        reasoning: st.reasoning || undefined,
         interrupted: aborted || undefined,
       });
       savedAssistant = true;
     }
     // 首轮问答完成后自动生成一次会话标题；失败不影响当前对话。
-    if (writeUser) {
-      autoTitleSession(currentSessionId, 2).then((updated) => {
+    if (st.writeUser) {
+      autoTitleSession(st.sid, 2).then((updated) => {
         if (updated) refreshSessions();
       }).catch(() => {});
     }
     refreshSessions();
   }
+  // 完成后移除注册表项：数据已入库，之后 openSession 从后端正常读取
+  st.finished = true;
+  st.saved = savedAssistant;
+  st.aborted = aborted;
+  delete liveStreams[st.sid];
   // saved 标记供调用方维护会话消息计数：full/reasoning 为空（如刚发送即点停止）时，
   // 也可能已把空 assistant 消息写入后端历史，调用方据此决定是否递增 sessionTotal。
-  return { full, reasoning, saved: savedAssistant };
+  return { full: st.full, reasoning: st.reasoning, saved: savedAssistant };
 }
 
 // 为已有首轮问答且仍使用默认标题的会话补生成标题。
@@ -498,13 +612,26 @@ async function retryFrom(msgIndex) {
   // 先清掉其重试按钮，避免出现"倒数第二条也能重试"的误标
   document.querySelectorAll(".msg-actions .retry-btn").forEach((b) => b.remove());
   // 在会话末尾追加一个新的助手占位并流式请求（user 提问仍在 conversation 中，作为上下文）
+  const sid = currentSessionId;
   lastAssistantMsgIndex = msgIndex; // 新回答为最后一条助手消息，显示重试按钮（渲染前先设置）
-  const assistantEl = addMsgEl("assistant", "", true, msgIndex);
+  // 以发起时固化的 payload 创建流式请求（writeUser=false：重试时 user 已在历史中）
+  const st = createLiveStream({
+    sid,
+    userText,
+    files: userFiles,
+    writeUser: false,
+    saveHistory: true,
+    msgIndex,
+    payload: buildChatPayload(sid),
+  });
+  buildLiveBubbles(st);
+  st.mounted = true;
+  liveStreams[sid] = st;
   try {
     sendBtn.disabled = true;
-    const res = await streamAssistant(userText, assistantEl, true, false, userFiles);
-    if (res && (res.full || res.reasoning)) conversation.push({ role: "assistant", content: res.full });
-    if (res && res.saved) sessionTotal++; // 后端已保存该 assistant 消息
+    const res = await runLiveStream(st);
+    if (res && (res.full || res.reasoning) && sid === currentSessionId) conversation.push({ role: "assistant", content: res.full });
+    if (res && res.saved && sid === currentSessionId) sessionTotal++; // 后端已保存该 assistant 消息
   } catch (e) {
     activeAbortController = null;
     isGenerating = false;
@@ -512,7 +639,7 @@ async function retryFrom(msgIndex) {
     if (e && e.body && e.body.vector_memory_error) {
       showToast((e.message || "向量记忆不可用") + "，已停止回复");
     }
-    assistantEl.textContent = "[错误] " + e.message;
+    if (st.mounted) st.assistantEl.textContent = "[错误] " + e.message;
   } finally {
     sendBtn.disabled = false;
   }
@@ -599,16 +726,28 @@ async function sendMessage() {
   // 发送后立即清空输入框上方的待发送文件卡片（不等输出完成）
   if (window.FileReaderModule) FileReaderModule.clearPendingFiles();
 
-  // 渲染助手占位（下标紧随用户消息之后）
-  lastAssistantMsgIndex = userIdx + 1; // 最后一条助手消息，显示重试按钮（渲染前先设置）
-  const assistantEl = addMsgEl("assistant", "", true, userIdx + 1);
-
+  // 以发起时捕获的会话 id 与固化的 payload 创建流式请求（writeUser=true：首次发送需写 user）
   const sendBtn = $("#sendBtn");
+  const sid = currentSessionId;
+  lastAssistantMsgIndex = sessionTotal; // user 已 push 并 sessionTotal++，assistant 下标 = 新总数
+  const st = createLiveStream({
+    sid,
+    userText: text,
+    files,
+    writeUser: true,
+    saveHistory: true,
+    msgIndex: sessionTotal,
+    payload: buildChatPayload(sid),
+  });
+  buildLiveBubbles(st); // 渲染助手占位（含加载动画）
+  st.mounted = true;
+  liveStreams[sid] = st;
   sendBtn.disabled = true;
   try {
-    const res = await streamAssistant(text, assistantEl, true, true, files);
-    if (res && (res.full || res.reasoning)) conversation.push({ role: "assistant", content: res.full });
-    if (res && res.saved) sessionTotal++; // 后端已保存该 assistant 消息（含停止时的空消息）
+    const res = await runLiveStream(st);
+    // 仅当本会话仍为当前会话时才更新内存态，避免把 A 的结果误写进 B
+    if (res && (res.full || res.reasoning) && sid === currentSessionId) conversation.push({ role: "assistant", content: res.full });
+    if (res && res.saved && sid === currentSessionId) sessionTotal++; // 后端已保存该 assistant 消息（含停止时的空消息）
   } catch (e) {
     // 异常收尾：任何失败都要恢复发送按钮与生成状态
     activeAbortController = null;
@@ -617,8 +756,8 @@ async function sendMessage() {
     if (e && e.body && e.body.vector_memory_error) {
       // 向量记忆不可用：提示并停止回复，把内容退回输入框，撤销刚渲染的气泡
       handleVmFailure(e, text, files);
-    } else {
-      assistantEl.textContent = "[错误] " + e.message;
+    } else if (st.mounted) {
+      st.assistantEl.textContent = "[错误] " + e.message;
     }
   } finally {
     sendBtn.disabled = false;

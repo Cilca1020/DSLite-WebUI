@@ -178,6 +178,8 @@ async function refreshSessions() {
     del.onclick = async (e) => {
       e.stopPropagation();
       if (!confirm("确定删除会话「" + s.title + "」？")) return;
+      // 会话将被删除：终止其仍在进行中的流式请求并清理注册表项
+      if (window.abortLiveStream) window.abortLiveStream(s.id);
       await apiDelete("/api/sessions/" + s.id);
       if (currentSessionId === s.id) {
         // 删的是当前会话：优先切到最新会话，无其他会话才新建
@@ -213,6 +215,8 @@ function resetChatUI() {
   showEmptyHint(box); // 未选中对话时居中显示「你好」欢迎提示
   const model = $("#modelSelect").value || ($("#modelSelect").options[0] || {}).value || "";
   applyConfigToUI(model, PARAM_DEFAULTS);
+  // 未选中会话：所有进行中的流式请求标记为不可见（后台继续累积，不中断）
+  if (window.syncLiveStreams) window.syncLiveStreams(null);
   refreshSessions(); // 清除侧栏激活态
 }
 
@@ -295,6 +299,9 @@ async function openSession(id, opts = {}) {
   if (!box.querySelector(".msg-row")) showEmptyHint(box);
   else hideEmptyHint(box);
   refreshSessions();
+  // 会话切换后的流式状态同步：本会话若有进行中的流式输出则恢复其气泡继续渲染，
+  // 其它会话的流式请求标记为不可见（后台继续累积，不中断、不重置）。
+  if (window.syncLiveStreams) window.syncLiveStreams(id);
   // 切换后清理其他空会话（保留当前正在查看的）
   await cleanupEmptySessions(currentSessionId);
 }
