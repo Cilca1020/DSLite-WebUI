@@ -269,19 +269,66 @@ async function init() {
   // 置底按钮：滚动离开最底部时浮现，点击回到底部；最底部或无法滚动时隐藏
   const chatBoxEl = $("#chatBox");
   const scrollDownBtn = $("#scrollDownBtn");
+  const FOLLOW_BTN_PX = 40; // 置底按钮浮现/隐藏的底部判定（仅用于按钮）
+  const FOLLOW_REENABLE_PX = 8; // 距底部多近算「贴到底部」（用于恢复跟随）
+  const FOLLOW_STICK_MS = 400; // 贴到底部后停留多久才恢复跟随（防抖）
   const updateScrollDown = () => {
     const box = chatBoxEl;
     const canScroll = box.scrollHeight > box.clientHeight + 1;
-    const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+    const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < FOLLOW_BTN_PX;
     scrollDownBtn.classList.toggle("hidden", !canScroll || atBottom);
   };
+
+  // 自动跟随置底（流式输出期间）：默认开启。
+  // 方向感知：任何「上滑」动作立即暂停跟随，流式不再强制拉回底部；
+  // 只有用户下滚并真正「贴到底部」（距底 ≤ FOLLOW_REENABLE_PX）后，
+  // 停留约 FOLLOW_STICK_MS 才恢复跟随最新内容。
+  // 之前用 40px 宽松阈值导致慢速上滑时被反复拉回底部（滚动条上下跳），故改为方向判定。
+  let followBottom = true;
+  let followPending = null;
+  let prevScrollTop = chatBoxEl.scrollTop;
+  const cancelFollowPending = () => {
+    if (followPending) { clearTimeout(followPending); followPending = null; }
+  };
+  const scheduleFollowEnable = () => {
+    cancelFollowPending();
+    followPending = setTimeout(() => {
+      followPending = null;
+      followBottom = true;
+    }, FOLLOW_STICK_MS);
+  };
+  const setFollowBottom = (v) => {
+    cancelFollowPending();
+    followBottom = v;
+  };
+  // 供 chat.js 的流式渲染查询当前是否允许自动置底
+  window.shouldFollowScroll = () => followBottom;
+  // 内容被整体替换（openSession / resetChatUI）后重置跟随并同步方向锚点，
+  // 避免「旧位置较高→新内容更短导致 scrollTop 减小」被误判为向上滚动
+  window.resetScrollFollow = () => {
+    setFollowBottom(true);
+    prevScrollTop = chatBoxEl.scrollTop;
+  };
+
   chatBoxEl.addEventListener("scroll", () => {
     updateScrollDown();
     // 上滑接近顶部时按需加载更早的消息（长对话分段渲染）
     if (chatBoxEl.scrollTop <= 40) loadOlderMessages();
+    const scrollTop = chatBoxEl.scrollTop;
+    const maxScroll = chatBoxEl.scrollHeight - chatBoxEl.clientHeight;
+    const dist = Math.max(0, maxScroll - scrollTop);
+    if (scrollTop < prevScrollTop) {
+      // 用户主动上滑 → 立即暂停跟随（无论离开底部多近）
+      setFollowBottom(false);
+    } else if (dist <= FOLLOW_REENABLE_PX) {
+      // 下滚并贴到底部 → 停留一会儿再恢复跟随（防抖，避免来回抖动）
+      scheduleFollowEnable();
+    }
+    prevScrollTop = scrollTop;
   }, { passive: true });
   scrollDownBtn.addEventListener("click", () => {
     chatBoxEl.scrollTop = chatBoxEl.scrollHeight; // 瞬时回底，避免长对话滚动动画过慢
+    setFollowBottom(true); // 点击置底后立即恢复跟随
   });
   updateScrollDown();
 

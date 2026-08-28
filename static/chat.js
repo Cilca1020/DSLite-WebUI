@@ -122,8 +122,11 @@ function showActionsForEl(assistantEl) {
     void bar.offsetWidth; // 强制重排，确保动画从头播放
     bar.classList.add("msg-actions-in");
   }
-  const box = $("#chatBox");
-  if (box) box.scrollTop = box.scrollHeight;
+  // 仅当用户处于「跟随置底」状态时才回底显示操作条，避免打扰正在上滑阅读的用户
+  if (window.shouldFollowScroll && window.shouldFollowScroll()) {
+    const box = $("#chatBox");
+    if (box) box.scrollTop = box.scrollHeight;
+  }
 }
 
 // 寻找 src[0, end) 中最后一个"块级安全断点"下标（不含则回退到 0）。
@@ -237,8 +240,11 @@ function liveRenderChunk(st) {
     }
     liveRenderAnswer(st); // 增量渲染：实时成型，已定型块不重绘
   }
-  const box = $("#chatBox");
-  if (box) box.scrollTop = box.scrollHeight;
+  // 仅当用户处于「跟随置底」状态时跟随最新内容；主动上滑阅读时不强制拉回底部
+  if (window.shouldFollowScroll && window.shouldFollowScroll()) {
+    const box = $("#chatBox");
+    if (box) box.scrollTop = box.scrollHeight;
+  }
 }
 
 // 累积文本：无论会话是否可见都追加到 full/reasoning（不触碰 DOM）

@@ -217,6 +217,8 @@ function resetChatUI() {
   applyConfigToUI(model, PARAM_DEFAULTS);
   // 未选中会话：所有进行中的流式请求标记为不可见（后台继续累积，不中断）
   if (window.syncLiveStreams) window.syncLiveStreams(null);
+  // 内容已整体清空：重置「跟随置底」状态，避免方向判断误触发
+  if (window.resetScrollFollow) window.resetScrollFollow();
   refreshSessions(); // 清除侧栏激活态
 }
 
@@ -295,6 +297,8 @@ async function openSession(id, opts = {}) {
   });
   // 渲染完成后滚动到最底部
   box.scrollTop = box.scrollHeight;
+  // 内容已整体替换：重置「跟随置底」状态并同步方向锚点，避免方向判断误触发
+  if (window.resetScrollFollow) window.resetScrollFollow();
   // 空会话（无消息）时居中显示欢迎提示，否则移除
   if (!box.querySelector(".msg-row")) showEmptyHint(box);
   else hideEmptyHint(box);
