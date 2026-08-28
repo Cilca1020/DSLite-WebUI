@@ -2,6 +2,8 @@
 
 一个网页端程序，用于与 DeepSeek 等兼容 OpenAI 协议的大模型对话，支持便捷的参数调整。
 
+测试网页：https://dpsklite-webui.top   欢迎骚扰（bushi
+
 ## 目录
 
 - [功能](#功能)
