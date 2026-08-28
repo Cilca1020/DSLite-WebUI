@@ -9,11 +9,11 @@ import os
 # 0.0.0.0 允许局域网内其他设备（如手机）访问；仅本机访问可改回 127.0.0.1
 HOST = "0.0.0.0"
 PORT = 5000
-SECRET_KEY = "dslite-webui-change-this-secret"
+SECRET_KEY = "dpsklite-webui-change-this-secret"
 
 # 是否要求 session cookie 仅在 HTTPS 下传输。
 # 默认关闭，保证「克隆后直接 python app.py 以明文 http://<ip>:5000 访问」也能登录。
-# 若部署在 nginx 等 HTTPS 反向代理之后，请改为 True（并配合 nginx-dslite-webui.conf）。
+# 若部署在 nginx 等 HTTPS 反向代理之后，请改为 True（并配合 nginx-dpsklite-webui.conf）。
 SESSION_COOKIE_SECURE = False
 
 # 自动生成会话标题使用的固定模型（不跟随 UI 选择，保证标题生成轻量稳定）

@@ -42,7 +42,7 @@ app = Flask(__name__, static_folder="static")
 # 部署在 nginx 反向代理之后：信任其转发的 X-Forwarded-Proto / For / Host，
 # 使 request.is_secure 与 Cookie 安全标记等能正确感知 HTTPS 请求。
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
-app.secret_key = os.environ.get("DSLITE_WEBUI_SECRET_KEY", config.SECRET_KEY)
+app.secret_key = os.environ.get("DPSKLITE_WEBUI_SECRET_KEY", config.SECRET_KEY)
 app.config["SESSION_COOKIE_SECURE"] = config.SESSION_COOKIE_SECURE
 # 持久化 session cookie：关闭浏览器 / 切换网络后仍保持登录 30 天
 app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)

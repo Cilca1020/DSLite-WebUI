@@ -1,4 +1,4 @@
-"""DSLite-WebUI 一键重启脚本（跨平台：Windows / macOS / Linux）。
+"""DpskLite-WebUI 一键重启脚本（跨平台：Windows / macOS / Linux）。
 
 功能：
   1. 自动检测并停止占用服务端口的旧进程（支持流式对话正在跑的进程）。

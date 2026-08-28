@@ -1,4 +1,4 @@
-# DSLite-WebUI
+# DpskLite-WebUI
 
 一个网页端程序，用于与 DeepSeek 等兼容 OpenAI 协议的大模型对话，支持便捷的参数调整。
 
@@ -67,7 +67,7 @@ git clone https://huggingface.co/Qwen/Qwen3-Embedding-0.6B models/models--Qwen--
 ## 目录结构
 
 ```
-DSLite-WebUI/
+DpskLite-WebUI/
 ├── app.py            # Flask 后端入口，注册所有接口
 ├── llm_client.py     # 调用大模型的封装（兼容 OpenAI 协议）
 ├── storage.py        # SQLite 账号与会话存储，JSON 参数预设存储
@@ -89,7 +89,7 @@ DSLite-WebUI/
 ├── data/             # 运行时生成（app.db、旧版会话 JSON、预设，已被 .gitignore 忽略）
 ├── restart.py        # 一键重启脚本（跨平台，自动清理占用端口的旧进程）
 ├── restart.bat       # Windows 快捷重启入口（双击即可）
-├── nginx-dslite-webui.conf  # 可选：nginx HTTPS 反向代理配置模板
+├── nginx-dpsklite-webui.conf  # 可选：nginx HTTPS 反向代理配置模板
 └── requirements.txt
 ```
 
@@ -131,7 +131,7 @@ python restart.py --port 5001    # 自定义端口（默认读 config.py）
 
 ## 可选：nginx 反向代理（HTTPS 部署）
 
-**本应用不依赖 nginx**，克隆后直接 `python app.py` 即可通过 `http://<ip>:5000` 使用。若希望以统一端口对外提供 HTTPS 访问，可选用 nginx 反向代理。项目内已附带配置模板 `nginx-dslite-webui.conf`。
+**本应用不依赖 nginx**，克隆后直接 `python app.py` 即可通过 `http://<ip>:5000` 使用。若希望以统一端口对外提供 HTTPS 访问，可选用 nginx 反向代理。项目内已附带配置模板 `nginx-dpsklite-webui.conf`。
 
 ### 为什么要配 nginx
 - **HTTPS 加密**：对外传输走 TLS，避免明文。
@@ -141,13 +141,13 @@ python restart.py --port 5001    # 自定义端口（默认读 config.py）
 ### 步骤
 
 1. 下载 nginx（Windows 选 stable 版的 `nginx/Windows-1.x.x.zip`，Linux 用包管理器安装）。
-2. 将 `nginx-dslite-webui.conf` 复制到 nginx 的 `conf/` 目录。
-3. 在 `conf/nginx.conf` 的 `http { }` 内加入一行 `include nginx-dslite-webui.conf;`。
+2. 将 `nginx-dpsklite-webui.conf` 复制到 nginx 的 `conf/` 目录。
+3. 在 `conf/nginx.conf` 的 `http { }` 内加入一行 `include nginx-dpsklite-webui.conf;`。
 4. **生成自签名证书**（有效期一年，SAN 覆盖 localhost）：
    ```bash
    openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-     -keyout C:/Downloads/nginx-1.30.4/certs/dslite.key \
-     -out    C:/Downloads/nginx-1.30.4/certs/dslite.crt \
+     -keyout C:/Downloads/nginx-1.30.4/certs/dpsklite.key \
+     -out    C:/Downloads/nginx-1.30.4/certs/dpsklite.crt \
      -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
    ```
    > 证书路径需与配置文件中 `ssl_certificate` / `ssl_certificate_key` 一致；模板中使用绝对路径，请按你的 nginx 安装位置调整。
@@ -165,5 +165,5 @@ python restart.py --port 5001    # 自定义端口（默认读 config.py）
 ## 说明
 
 - 后端仅作为代理转发，每次请求由前端携带 Key，后端不落盘保存 Key。
-- 账号和会话数据保存在 `data/app.db`，会话通过 `username` 外键绑定账号，密码以 PBKDF2 哈希保存；部署到生产环境时请设置 `DSLITE_WEBUI_SECRET_KEY` 环境变量覆盖默认 Flask session 密钥。
+- 账号和会话数据保存在 `data/app.db`，会话通过 `username` 外键绑定账号，密码以 PBKDF2 哈希保存；部署到生产环境时请设置 `DPSKLITE_WEBUI_SECRET_KEY` 环境变量覆盖默认 Flask session 密钥。
 - 支持的模型在 `config.py` 中配置，默认包含 DeepSeek 与 OpenAI 兼容端点。
