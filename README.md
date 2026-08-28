@@ -89,7 +89,6 @@ DpskLite-WebUI/
 ├── data/             # 运行时生成（app.db、旧版会话 JSON、预设，已被 .gitignore 忽略）
 ├── restart.py        # 一键重启脚本（跨平台，自动清理占用端口的旧进程）
 ├── restart.bat       # Windows 快捷重启入口（双击即可）
-├── nginx-dpsklite-webui.conf  # 可选：nginx HTTPS 反向代理配置模板
 └── requirements.txt
 ```
 
@@ -129,38 +128,7 @@ python restart.py --port 5001    # 自定义端口（默认读 config.py）
 
 > 脚本会检测并结束占用端口的旧进程再启动，避免「旧进程占着端口导致新进程起不来」。
 
-## 可选：nginx 反向代理（HTTPS 部署）
 
-**本应用不依赖 nginx**，克隆后直接 `python app.py` 即可通过 `http://<ip>:5000` 使用。若希望以统一端口对外提供 HTTPS 访问，可选用 nginx 反向代理。项目内已附带配置模板 `nginx-dpsklite-webui.conf`。
-
-### 为什么要配 nginx
-- **HTTPS 加密**：对外传输走 TLS，避免明文。
-- **统一端口**：外部访问 80/443，无需暴露 5000。
-- 对 `/api/chat` 的流式输出做了专项配置（`proxy_buffering off`），保证前端 token 实时接收。
-
-### 步骤
-
-1. 下载 nginx（Windows 选 stable 版的 `nginx/Windows-1.x.x.zip`，Linux 用包管理器安装）。
-2. 将 `nginx-dpsklite-webui.conf` 复制到 nginx 的 `conf/` 目录。
-3. 在 `conf/nginx.conf` 的 `http { }` 内加入一行 `include nginx-dpsklite-webui.conf;`。
-4. **生成自签名证书**（有效期一年，SAN 覆盖 localhost）：
-   ```bash
-   openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-     -keyout C:/Downloads/nginx-1.30.4/certs/dpsklite.key \
-     -out    C:/Downloads/nginx-1.30.4/certs/dpsklite.crt \
-     -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
-   ```
-   > 证书路径需与配置文件中 `ssl_certificate` / `ssl_certificate_key` 一致；模板中使用绝对路径，请按你的 nginx 安装位置调整。
-5. 启动后端 `python app.py`，再校验并重载 nginx：
-   ```bash
-   nginx -t && nginx -s reload
-   ```
-6. 访问 `https://localhost/`（自签名证书会有浏览器警告，点「高级 → 继续前往」即可）。
-
-### 注意
-- **自签名证书**仅适合本地/内网信任环境；正式对外暴露建议换用受信任 CA 证书（如 Let's Encrypt，需公网域名）。
-- 若希望 session cookie 仅在 HTTPS 下传输（更严格），将 `config.py` 中的 `SESSION_COOKIE_SECURE` 改为 `True`。默认保持 `False`，以保证不走 nginx 时明文直连也能正常登录。
-- 局域网内手机等设备访问会提示同样的自签名证书警告，属正常现象。
 
 ## 说明
 
