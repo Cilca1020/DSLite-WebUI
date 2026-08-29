@@ -586,6 +586,13 @@ def api_run_summary(sid):
     stored = storage.get_session(username, sid)
     if not stored:
         return jsonify({"error": "会话不存在"}), 404
+    # N=0 全量模式：剧情总结功能完全停用（手动也拒绝）
+    mem = storage.get_session_memory(username, sid) or {}
+    recent_n = mem.get("recent_n")
+    if recent_n is None:
+        recent_n = (mem.get("vector") or {}).get("recent_n")
+    if recent_n == 0:
+        return jsonify({"error": "最近 N 轮为 0（全量模式）时已停用剧情总结"}), 400
     slice_rounds = data.get("slice_rounds")
     try:
         slice_rounds = int(slice_rounds) if slice_rounds else None
@@ -635,7 +642,7 @@ def api_summary_config(sid):
 
 @app.route("/api/sessions/<sid>/vector-config", methods=["GET", "POST"])
 def api_vector_config(sid):
-    """读取 / 设置会话向量记忆配置。
+    """读取 / 设置会话向量记忆配置.
 
     GET 返回当前配置（enabled/model/recent_n/top_k）。
     POST body 可选 {"enabled": bool, "model": str, "recent_n": int, "top_k": int}，
@@ -653,7 +660,7 @@ def api_vector_config(sid):
         return jsonify({
             "enabled": bool(v.get("enabled")),
             "model": v.get("model"),
-            "recent_n": v.get("recent_n"),
+            "recent_n": mem.get("recent_n", v.get("recent_n")),
             "top_k": v.get("top_k"),
             "auto": v.get("top_k") == 0,  # 是否为自动召回
         })
@@ -677,10 +684,28 @@ def api_vector_config(sid):
     return jsonify({
         "enabled": bool(v.get("enabled")),
         "model": v.get("model"),
-        "recent_n": v.get("recent_n"),
+        "recent_n": mem.get("recent_n", v.get("recent_n")),
         "top_k": v.get("top_k"),
         "auto": v.get("top_k") == 0,
     })
+
+
+@app.route("/api/sessions/<sid>/context-config", methods=["GET", "POST"])
+def api_context_config(sid):
+    """读取 / 设置独立上下文保留策略 N。N=0 表示全量模式。"""
+    username = session["username"]
+    mem = storage.get_session_memory(username, sid)
+    if mem is None:
+        return jsonify({"error": "会话不存在"}), 404
+    if request.method == "GET":
+        return jsonify({"recent_n": mem.get("recent_n", (mem.get("vector") or {}).get("recent_n", config.VECTOR_MEMORY_RECENT_N))})
+    data = request.get_json(force=True, silent=True) or {}
+    if "recent_n" not in data:
+        return jsonify({"error": "缺少 recent_n"}), 400
+    mem = storage.set_session_recent_n(username, sid, data.get("recent_n"))
+    if mem is None:
+        return jsonify({"error": "会话不存在"}), 404
+    return jsonify({"recent_n": mem.get("recent_n", config.VECTOR_MEMORY_RECENT_N)})
 
 
 @app.route("/api/sessions/<sid>/facts-refresh", methods=["POST"])

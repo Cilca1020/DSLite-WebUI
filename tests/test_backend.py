@@ -66,6 +66,11 @@ class TestStorageParse(unittest.TestCase):
         v = storage._parse_vm({"top_k": 0})
         self.assertEqual(v["top_k"], 0)
 
+    def test_parse_vm_recent_n_zero_kept(self):
+        """recent_n=0（全量模式）不能被吞成默认值。"""
+        v = storage._parse_vm({"recent_n": 0})
+        self.assertEqual(v["recent_n"], 0)
+
     def test_parse_vm_top_k_empty_is_none(self):
         v = storage._parse_vm({"top_k": ""})
         self.assertIsNone(v["top_k"])
@@ -171,6 +176,11 @@ class TestStorageCRUD(unittest.TestCase):
         mem = storage.set_session_vector_config(self.username, self.sid, top_k=0, enabled=True)
         self.assertEqual(mem["vector"]["top_k"], 0)  # 0 不被吞
         self.assertTrue(mem["vector"]["enabled"])
+
+    def test_vector_config_recent_n_zero_kept(self):
+        """recent_n=0（全量模式）保存时不能被钳成 1。"""
+        mem = storage.set_session_vector_config(self.username, self.sid, recent_n=0)
+        self.assertEqual(mem["vector"]["recent_n"], 0)
 
     def test_vector_config_top_k_none_clears(self):
         """显式传 None（前端清空输入框）应清除 top_k 恢复默认，而非保留旧值。"""
@@ -289,6 +299,35 @@ class TestMemoryEngine(unittest.TestCase):
         # top_k 按会话配置 5 传递
         _, kwargs = fake_vm.build_history.call_args
         self.assertEqual(kwargs["top_k"], 5)
+
+    def test_build_context_n_zero_bypasses_vector_and_summary(self):
+        """N=0 全量模式：绕过向量检索；摘要层不上传（已总结文本保留在库）。"""
+        storage.set_session_card(self.username, self.sid, "你是勇敢的骑士。", source="paste")
+        storage.set_session_facts(self.username, self.sid, [{"text": "主角叫艾伦"}])
+        storage.set_session_summary(self.username, self.sid, "艾伦出发去冒险。", last_round=2)
+        storage.set_session_vector_config(self.username, self.sid, recent_n=0, enabled=True, top_k=5)
+        fake_vm = mock.MagicMock()
+        with mock.patch("vector_memory.get_instance", return_value=fake_vm):
+            ctx = memory_engine.build_context(
+                self.username, self.sid, self._msgs(3), data={"model": "deepseek-chat"}
+            )
+        fake_vm.build_history.assert_not_called()  # 完全绕过向量
+        contents = [m["content"] for m in ctx]
+        self.assertTrue(any("骑士" in c for c in contents))   # ① 卡照常
+        self.assertTrue(any("关键事实" in c for c in contents))  # ② 事实照常
+        self.assertFalse(any("剧情摘要" in c for c in contents))  # ③ 摘要不上传
+        # 已总结文本保留在库
+        mem = storage.get_session_memory(self.username, self.sid)
+        self.assertEqual(mem["summary"]["text"], "艾伦出发去冒险。")
+
+    def test_should_auto_summary_disabled_when_n_zero(self):
+        """N=0 全量模式：自动总结不触发。"""
+        storage.set_session_summary(self.username, self.sid, "摘要", last_round=1)
+        for i in range(30):
+            storage.append_message(self.username, self.sid, "user", f"q{i}")
+            storage.append_message(self.username, self.sid, "assistant", f"a{i}")
+        storage.set_session_vector_config(self.username, self.sid, recent_n=0)
+        self.assertFalse(memory_engine.should_auto_summary(self.username, self.sid))
 
     def test_extract_facts_merge_and_dedup(self):
         """LLM 返回新事实：合并旧事实 + 相似去重。"""
@@ -660,6 +699,15 @@ class TestAPI(unittest.TestCase):
         r = self.client.get(f"/api/sessions/{sid}/vector-config")
         self.assertEqual(r.get_json()["recent_n"], 8)
 
+    def test_vector_config_recent_n_zero_api(self):
+        """N=0（全量模式）通过 API 保存不被钳成 1。"""
+        sid = self._new_session()
+        r = self.client.post(f"/api/sessions/{sid}/vector-config", json={"recent_n": 0})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json()["recent_n"], 0)
+        r = self.client.get(f"/api/sessions/{sid}/vector-config")
+        self.assertEqual(r.get_json()["recent_n"], 0)
+
     def test_vector_config_clear_top_k_api(self):
         """前端清空 top_k 输入框传 null，应清除配置而非保留旧值。"""
         sid = self._new_session()
@@ -685,6 +733,14 @@ class TestAPI(unittest.TestCase):
         # 缺 api_key
         r = self.client.post(f"/api/sessions/{sid}/summary", json={})
         self.assertEqual(r.status_code, 400)
+
+    def test_summary_api_rejected_when_n_zero(self):
+        """N=0 全量模式：手动总结 API 拒绝（总结功能完全停用）。"""
+        sid = self._new_session()
+        self.client.post(f"/api/sessions/{sid}/vector-config", json={"recent_n": 0})
+        r = self.client.post(f"/api/sessions/{sid}/summary", json={"api_key": "fake-key"})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("停用", r.get_json()["error"])
 
     def test_refresh_api_mock_llm(self):
         sid = self._new_session()

@@ -60,6 +60,35 @@ def _vector_enabled(memory, data, sid):
     return enabled and bool(sid)
 
 
+def _context_n(memory, data):
+    """返回最近 N 轮上下文保留数。优先级：data.recent_n > data.vector_memory_recent_n > memory.recent_n > memory.vector.recent_n > 全局默认。"""
+    mem = memory or {}
+    vec_cfg = mem.get("vector") or {}
+    candidates = []
+    if data is not None:
+        if "recent_n" in data and data.get("recent_n") is not None and data.get("recent_n") != "":
+            candidates.append(data.get("recent_n"))
+        if "vector_memory_recent_n" in data and data.get("vector_memory_recent_n") is not None and data.get("vector_memory_recent_n") != "":
+            candidates.append(data.get("vector_memory_recent_n"))
+    if mem.get("recent_n") is not None:
+        candidates.append(mem.get("recent_n"))
+    if vec_cfg.get("recent_n") is not None:
+        candidates.append(vec_cfg.get("recent_n"))
+    candidates.append(config.VECTOR_MEMORY_RECENT_N)
+    for raw in candidates:
+        try:
+            n = int(raw)
+            return max(0, min(n, 1000))
+        except (TypeError, ValueError):
+            continue
+    return config.VECTOR_MEMORY_RECENT_N
+
+
+def _recent_n_is_zero(memory, data):
+    """判断最近 N 轮是否为 0（全量模式）。请求参数优先于会话配置。"""
+    return _context_n(memory, data) == 0
+
+
 # ------------------------- 上下文拼接（核心） -------------------------
 
 def build_context(username, sid, user_messages, data=None, params=None, stored_msgs=None):
@@ -97,9 +126,10 @@ def build_context(username, sid, user_messages, data=None, params=None, stored_m
     if facts:
         layers.append({"role": _FACTS_ROLE, "content": _facts_block(facts)})
 
-    # ③ 剧情摘要（无条件）
+    # ③ 剧情摘要（无条件；N=0 全量模式除外：总结停用，已总结文本保留但不上传）
     summary = (memory or {}).get("summary")
-    if summary and str(summary.get("text", "")).strip():
+    if (summary and str(summary.get("text", "")).strip()
+            and not _recent_n_is_zero(memory, data)):
         layers.append({"role": _SUMMARY_ROLE, "content": _summary_block(summary)})
 
     # ④ 向量检索片段（按需）+ 最近窗口
@@ -125,10 +155,13 @@ def _summary_block(summary):
 
 
 def _build_history(chat, sid, data, params, stored_msgs, memory):
-    """第④层向量检索 + 最近窗口拼接。向量不可用/未启用时退化为纯最近窗口截断。"""
+    """第④层向量检索 + 最近窗口拼接。向量不可用/未启用时退化为纯最近窗口截断。
+
+    N=0（全量模式）：完全绕过向量记忆，纯全量 + 字数截断。
+    """
     vec_cfg = (memory or {}).get("vector") or {}
     enabled = _vector_enabled(memory, data, sid)
-    if not enabled or not sid:
+    if _recent_n_is_zero(memory, data) or not enabled or not sid:
         return _truncate_long(chat, data.get("model") if data else None, params)
     try:
         vm = vector_memory.get_instance(
@@ -157,12 +190,7 @@ def _build_history(chat, sid, data, params, stored_msgs, memory):
         (m["content"] for m in reversed(chat) if m.get("role") == "user" and (m.get("content") or "").strip()),
         "",
     )
-    n_rounds = vec_cfg.get("recent_n") or config.VECTOR_MEMORY_RECENT_N
-    if data:
-        try:
-            n_rounds = int(data.get("vector_memory_recent_n") or n_rounds)
-        except (TypeError, ValueError):
-            pass
+    n_rounds = _context_n(memory, data)
     # top_k：会话配置优先。None=用默认；0=不限制（自动召回）；>0=固定 N 条。
     # 注意 vec_cfg.get("top_k") 可能为 None（未设置）或 0（不限制），需区分。
     session_top_k = vec_cfg.get("top_k")
@@ -516,6 +544,9 @@ def should_auto_summary(username, sid, stored_msgs=None):
     """
     memory = _get_memory(username, sid)
     if memory is None:
+        return False
+    # N=0 全量模式：剧情总结功能完全停用（自动不触发）
+    if _recent_n_is_zero(memory, None):
         return False
     summary = memory.get("summary") or {}
     auto_rounds = summary.get("auto_rounds")

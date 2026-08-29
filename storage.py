@@ -101,8 +101,19 @@ def _default_memory():
         "card": None,      # 核心设定卡 {"content","source","updated_at"}
         "facts": [],       # 动态关键事实 [{"text","ts"}]
         "summary": None,   # 剧情摘要 {"text","summarized_ts","last_round"}
+        "recent_n": config.VECTOR_MEMORY_RECENT_N,
         "vector": _parse_vm(None),  # 向量记忆设置（迁移自旧 vm）
     }
+
+
+def _parse_recent_n(raw, default=None):
+    default = config.VECTOR_MEMORY_RECENT_N if default is None else default
+    if raw is None or raw == "":
+        return default
+    try:
+        return max(0, min(int(raw), 1000))
+    except (TypeError, ValueError):
+        return default
 
 
 def _parse_memory(raw):
@@ -125,7 +136,11 @@ def _parse_memory(raw):
         ]
     s = raw.get("summary")
     mem["summary"] = _parse_summary(s) if s is not None else None
-    mem["vector"] = _parse_vm(raw.get("vector")) if isinstance(raw.get("vector"), dict) else _parse_vm(raw.get("vm"))
+    vec_cfg = raw.get("vector") if isinstance(raw.get("vector"), dict) else raw.get("vm")
+    mem["vector"] = _parse_vm(vec_cfg) if isinstance(vec_cfg, dict) else _parse_vm(None)
+    mem["recent_n"] = _parse_recent_n(raw.get("recent_n"), default=mem["vector"].get("recent_n", config.VECTOR_MEMORY_RECENT_N))
+    if "recent_n" not in raw and isinstance(vec_cfg, dict) and "recent_n" in vec_cfg:
+        mem["recent_n"] = _parse_recent_n(vec_cfg.get("recent_n"), default=mem["recent_n"])
     return mem
 
 
@@ -259,10 +274,12 @@ def _parse_vm(raw):
             return default
     if not isinstance(raw, dict):
         return default
-    try:
-        recent_n = max(1, min(int(raw.get("recent_n") or default["recent_n"]), 1000))
-    except (TypeError, ValueError):
-        recent_n = default["recent_n"]
+    recent_n = default["recent_n"]
+    if "recent_n" in raw and raw.get("recent_n") is not None and raw.get("recent_n") != "":
+        try:
+            recent_n = max(0, min(int(raw["recent_n"]), 1000))
+        except (TypeError, ValueError):
+            recent_n = default["recent_n"]
     # top_k：必须区分「未提供(None)」与「设置为0(不限制)」。
     # 只有当键存在且值非空时才算显式设置。
     top_k = default["top_k"]
@@ -525,7 +542,7 @@ def set_session_vector_config(username, sid, top_k=_UNSET, recent_n=None, enable
         changed = True
     if recent_n is not None:
         try:
-            vec["recent_n"] = max(1, min(int(recent_n), 1000))
+            vec["recent_n"] = max(0, min(int(recent_n), 1000))
             changed = True
         except (TypeError, ValueError):
             pass
@@ -537,7 +554,24 @@ def set_session_vector_config(username, sid, top_k=_UNSET, recent_n=None, enable
         changed = True
     if changed:
         memory["vector"] = _parse_vm(vec)
+        memory["recent_n"] = _parse_recent_n(memory["vector"].get("recent_n"), default=memory.get("recent_n", config.VECTOR_MEMORY_RECENT_N))
         save_session_memory(username, sid, memory)
+    return memory
+
+
+def set_session_recent_n(username, sid, recent_n):
+    """设置独立的最近 N 轮上下文策略（0=全量模式，保留全部上下文）。"""
+    memory = get_session_memory(username, sid)
+    if memory is None:
+        return None
+    if recent_n is None or recent_n == "":
+        memory["recent_n"] = config.VECTOR_MEMORY_RECENT_N
+    else:
+        try:
+            memory["recent_n"] = max(0, min(int(recent_n), 1000))
+        except (TypeError, ValueError):
+            memory["recent_n"] = config.VECTOR_MEMORY_RECENT_N
+    save_session_memory(username, sid, memory)
     return memory
 
 

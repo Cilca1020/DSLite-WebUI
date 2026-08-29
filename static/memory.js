@@ -21,7 +21,7 @@ function resetMemoryPanel() {
   MEMORY_STATE = null;
   const empty = memEl("memoryEmptyHint");
   if (empty) empty.classList.remove("hidden");
-  ["memorySystemGroup", "memoryCardGroup", "memoryFactsGroup", "memorySummaryGroup", "memoryVectorGroup"].forEach((id) => {
+  ["memorySystemGroup", "memoryContextGroup", "memoryCardGroup", "memoryFactsGroup", "memorySummaryGroup", "memoryVectorGroup"].forEach((id) => {
     const el = memEl(id);
     if (el) el.classList.add("hidden");
   });
@@ -31,7 +31,7 @@ function resetMemoryPanel() {
 // 打开设置面板 / 切换会话时调用；无会话时显示占位提示。
 async function loadMemoryPanel() {
   const empty = memEl("memoryEmptyHint");
-  const groups = ["memorySystemGroup", "memoryCardGroup", "memoryFactsGroup", "memorySummaryGroup", "memoryVectorGroup"].map(memEl);
+  const groups = ["memorySystemGroup", "memoryContextGroup", "memoryCardGroup", "memoryFactsGroup", "memorySummaryGroup", "memoryVectorGroup"].map(memEl);
 
   if (!currentSessionId) {
     resetMemoryPanel();
@@ -92,16 +92,37 @@ function renderMemoryPanel() {
     }
   }
 
+  // 最近 N 轮上下文策略
+  const recentN = (mem.recent_n !== undefined && mem.recent_n !== null)
+    ? mem.recent_n
+    : ((mem.vector || {}).recent_n !== undefined ? (mem.vector || {}).recent_n : 10);
+  const recentField = memEl("memoryContextN") || memEl("vmRecentN");
+  if (recentField) recentField.value = recentN;
+  if (window.vmSaveN) window.vmSaveN(recentN);
+
   // ③ 剧情摘要
   const summary = mem.summary || {};
+  // N=0 全量模式：剧情总结完全停用（按钮禁用 + 提示）
+  const zeroMode = recentN === 0;
+  const summaryRunBtn = memEl("memorySummaryRunBtn");
+  if (summaryRunBtn) {
+    summaryRunBtn.disabled = zeroMode;
+    summaryRunBtn.title = zeroMode ? "N=0（全量模式）时已停用剧情总结" : "";
+  }
+  const summarySaveBtn = memEl("memorySummarySaveConfigBtn");
+  if (summarySaveBtn) {
+    summarySaveBtn.disabled = zeroMode;
+    summarySaveBtn.title = zeroMode ? "N=0（全量模式）时已停用剧情总结" : "";
+  }
   const summaryText = memEl("memorySummaryText");
   if (summaryText) summaryText.value = summary.text || "";
   const meta = memEl("memorySummaryMeta");
   if (meta) {
     const last = summary.last_round;
-    meta.textContent = last
+    const zeroTip = zeroMode ? "（N=0 全量模式：总结停用，摘要不上传）" : "";
+    meta.textContent = (last
       ? "已总结至第 " + last + " 轮" + (summary.slice_rounds ? "（切片 " + summary.slice_rounds + " 轮）" : "")
-      : "尚未总结";
+      : "尚未总结") + zeroTip;
   }
   const sliceInput = memEl("memorySummarySlice");
   if (sliceInput && summary.slice_rounds !== undefined && summary.slice_rounds !== null) {
@@ -240,6 +261,33 @@ function bindMemoryFacts() {
   };
 }
 
+// 最近 N 轮：独立上下文保留策略
+function bindMemoryContext() {
+  const field = memEl("memoryContextN");
+  const saveBtn = memEl("memoryContextSaveBtn");
+  if (!field) return;
+  const saveCurrent = async () => {
+    if (!currentSessionId) return;
+    const raw = field.value;
+    let recent_n = null;
+    if (raw !== "" && raw !== null && raw !== undefined) {
+      recent_n = Math.max(0, Math.min(1000, parseInt(raw, 10) || 0));
+      field.value = recent_n;
+    }
+    try {
+      const r = await apiPost("/api/sessions/" + currentSessionId + "/context-config", { recent_n: recent_n });
+      if (r && r.error) return showToast(r.error);
+      if (window.vmSaveN) window.vmSaveN(r.recent_n);
+      showToast("上下文策略已保存");
+      await loadMemoryPanel();
+    } catch (_) {
+      showToast("保存失败");
+    }
+  };
+  field.addEventListener("change", saveCurrent);
+  if (saveBtn) saveBtn.addEventListener("click", saveCurrent);
+}
+
 // ③ 剧情摘要：保存配置 + 立即总结
 function bindMemorySummary() {
   const saveBtn = memEl("memorySummarySaveConfigBtn");
@@ -323,6 +371,7 @@ function initMemoryPanel() {
   bindMemoryCard();
   bindMemoryCardLib();
   bindMemoryFacts();
+  bindMemoryContext();
   bindMemorySummary();
   bindMemoryVectorTopK();
   // 向量开关变化时同步 top_k 禁用态（main.js 的 syncVmUi 也会调用）

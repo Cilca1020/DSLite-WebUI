@@ -18,6 +18,9 @@ let vmRecentN = VM_DEFAULT_N;
 // top_k 召回数量：null=未设置（后端用默认）；0=自动召回（不限制数量）；>0=固定 N 条
 let vmTopK = null;
 
+function getRecentNField() {
+  return document.getElementById("memoryContextN") || document.getElementById("vmRecentN") || null;
+}
 function vmLoadModel() { return localStorage.getItem(VM_MODEL_KEY) || ""; }
 function vmSaveModel(model) {
   if (model) localStorage.setItem(VM_MODEL_KEY, model);
@@ -26,7 +29,16 @@ function vmSaveModel(model) {
 function vmLoadEnabled() { return vmEnabled; }
 function vmLoadN() {
   const v = parseInt(vmRecentN, 10);
-  return isNaN(v) ? VM_DEFAULT_N : Math.max(1, Math.min(VM_N_MAX, v));
+  // N=0 合法：全量模式（保留全部上下文，按字数截断）
+  return isNaN(v) ? VM_DEFAULT_N : Math.max(0, Math.min(VM_N_MAX, v));
+}
+function vmSaveN(v) {
+  let n = parseInt(v, 10);
+  if (isNaN(n)) n = VM_DEFAULT_N;
+  vmRecentN = Math.max(0, Math.min(VM_N_MAX, n));
+  const field = getRecentNField();
+  if (field) field.value = vmRecentN;
+  return vmRecentN;
 }
 function vmLoadTopK() { return vmTopK; }
 function vmSaveTopK(v) {
@@ -53,11 +65,11 @@ function applyVmToUI(vm) {
   if (window.renderVmModelBox) window.renderVmModelBox();
   const en = $("#vmEnabled");
   if (en) en.checked = vmEnabled;
-  const n = $("#vmRecentN");
+  const n = getRecentNField();
   if (n) {
     n.value = vmLoadN();
     n.max = VM_N_MAX;
-    n.disabled = !vmEnabled; // 开关关闭时禁用 N 输入框
+    // N 是独立于向量记忆的上下文保留策略，输入框始终可用（N=0 = 全量模式）
   }
   const topK = $("#vmTopK");
   if (topK) {
@@ -416,7 +428,8 @@ function buildChatPayload(sid) {
     session_id: sid || undefined,
     vector_memory: vmUse(),
     vector_memory_model: vmLoadModel() || undefined,
-    vector_memory_recent_n: vmUse() ? vmLoadN() : undefined,
+    // N 独立于向量记忆开关：总是上报（N=0 为全量模式，后端据此绕过向量检索）
+    vector_memory_recent_n: vmLoadN(),
   };
 }
 

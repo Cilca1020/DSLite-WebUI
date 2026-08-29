@@ -145,36 +145,38 @@ async function init() {
   const syncVmUi = () => {
     const hasModel = !!vmLoadModel();
     const tf = $("#vmToggleField");
-    const nf = $("#vmNField");
     const kf = $("#vmTopKField");
     if (tf) tf.classList.toggle("vm-hidden", !hasModel);
-    if (nf) nf.classList.toggle("vm-hidden", !hasModel);
     if (kf) kf.classList.toggle("vm-hidden", !hasModel);
     $("#vmEnabled").disabled = !hasModel;
-    // N 与 top_k 仅在「已选模型且启用向量记忆」时可编辑；关闭开关或未选模型时禁用
+    // top_k 仅在「已选模型且启用向量记忆」时可编辑；N 独立于向量记忆，始终可用
     const enabled = $("#vmEnabled").checked;
-    $("#vmRecentN").disabled = !hasModel || !enabled;
     const topK = $("#vmTopK");
     if (topK) topK.disabled = !hasModel || !enabled;
     if (!hasModel) $("#vmEnabled").checked = false;
   };
 
+  const recentField = getRecentNField();
   $("#vmEnabled").checked = vmLoadEnabled();
   $("#vmEnabled").addEventListener("change", () => {
     vmEnabled = $("#vmEnabled").checked;
     syncVmUi(); // 开关状态变化时，同步 N 输入框的禁用状态
     saveVmSettings(); // 仅改向量设置：不新建对话
   });
-  $("#vmRecentN").value = vmLoadN();
-  $("#vmRecentN").max = VM_N_MAX; // N 上限统一 1000，不做动态钳制
-  $("#vmRecentN").addEventListener("change", () => {
-    let v = parseInt($("#vmRecentN").value, 10);
-    if (isNaN(v)) v = VM_DEFAULT_N;
-    v = Math.max(1, Math.min(VM_N_MAX, v));
-    $("#vmRecentN").value = v;
-    vmRecentN = v;
-    saveVmSettings(); // 仅改向量设置：不新建对话
-  });
+  if (recentField) {
+    recentField.value = vmLoadN();
+    recentField.max = VM_N_MAX; // N 上限统一 1000，不做动态钳制
+    recentField.addEventListener("change", () => {
+      let v = parseInt(recentField.value, 10);
+      if (isNaN(v)) v = VM_DEFAULT_N;
+      // N=0 合法（全量模式），范围 0~1000
+      v = Math.max(0, Math.min(VM_N_MAX, v));
+      recentField.value = v;
+      vmRecentN = v;
+      if (window.vmSaveN) window.vmSaveN(v);
+      saveVmSettings(); // 仅改向量设置：不新建对话
+    });
+  }
   refreshVmModels(); // 初始加载模型列表（渲染为下拉框）
 
   $("#clearKeyBtn").onclick = () => {
