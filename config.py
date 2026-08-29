@@ -125,6 +125,10 @@ NO_VM_CONTEXT_RATIO = 0.75
 # 记忆维护（事实抽取 / 切片总结 / 汇总）统一使用的轻量模型
 MEMORY_MAINTENANCE_MODEL = "deepseek-chat"
 
+# 用户侧「最近 N 轮对话」的默认值：新会话默认 0（全量模式，窗口能塞多少塞多少）。
+# 注意与 VECTOR_MEMORY_RECENT_N（向量检索内部默认窗口）区分开。
+MEMORY_RECENT_N_DEFAULT = 0
+
 # ② 动态关键事实：上限条数（防止无限膨胀）
 FACT_MAX = 50
 # 自动抽取关键事实的最小新消息条数（每次对话达到该条数才触发一次抽取）

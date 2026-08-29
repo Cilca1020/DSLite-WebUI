@@ -8,7 +8,7 @@ let isGenerating = false;
 // ------------------------- 向量记忆（长对话）前端状态 -------------------------
 // 模型选择随会话恢复（打开会话时以该会话保存的 model 覆盖浏览器缓存，见 applyVmToUI）；
 // 启用开关与 N 按「对话」单独存储（后端 sessions.vm）。新建对话默认关闭（开关关、N=默认）。
-const VM_DEFAULT_N = 10; // N 默认值（对应后端 RECENT_N）
+const VM_DEFAULT_N = 0; // N 默认值：新会话默认 0（全量模式，窗口能塞多少塞多少）；一键配置恢复为 10
 const VM_N_MAX = 1000; // N 输入上限（轮次会变化，不做动态钳制）
 const VM_MODEL_KEY = "dsw_vm_model"; // 浏览器缓存键
 
@@ -27,6 +27,8 @@ function vmSaveModel(model) {
   else localStorage.removeItem(VM_MODEL_KEY);
 }
 function vmLoadEnabled() { return vmEnabled; }
+// 供记忆页的「一键配置 / 关闭智能总结」在程序化改开关时同步内部状态（change 事件不触发）
+function vmSetEnabled(v) { vmEnabled = !!v; }
 function vmLoadN() {
   const v = parseInt(vmRecentN, 10);
   // N=0 合法：全量模式（保留全部上下文，按字数截断）
@@ -80,6 +82,7 @@ function applyVmToUI(vm) {
   if (window.syncMemoryVectorField) window.syncMemoryVectorField();
 }
 window.applyVmToUI = applyVmToUI;
+window.vmSetEnabled = vmSetEnabled;
 
 // 生成开始：发送按钮切换为「停止生成」按钮（仅生成期间显示）。
 // 纯文字「停止」与「发送」同为二字，宽度自然保持一致。

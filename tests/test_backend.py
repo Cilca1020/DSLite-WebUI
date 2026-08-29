@@ -172,6 +172,44 @@ class TestStorageCRUD(unittest.TestCase):
         mem = storage.set_session_summary_config(self.username, self.sid, auto_rounds=0)
         self.assertEqual(mem["summary"]["auto_rounds"], 0)
 
+    def test_memory_switches_one_click(self):
+        """一键配置：打开 2/3/4 开关并恢复数值默认（最近 N=10、摘要切片/自动、向量 TopK/recent_n）。"""
+        storage.set_session_facts(self.username, self.sid, [{"text": "主角叫艾伦"}])
+        storage.set_session_summary(self.username, self.sid, "艾伦出发去冒险。", last_round=2)
+        storage.set_session_vector_config(self.username, self.sid, recent_n=0, enabled=False, top_k=0)
+        mem = storage.set_session_memory_switches(
+            self.username, self.sid,
+            facts_enabled=True, summary_enabled=True, vector_enabled=True, reset_values=True,
+        )
+        self.assertTrue(mem["facts_enabled"])
+        self.assertTrue(mem["summary"]["enabled"])
+        self.assertTrue(mem["vector"]["enabled"])
+        self.assertEqual(mem["recent_n"], config.VECTOR_MEMORY_RECENT_N)  # 10
+        self.assertEqual(mem["summary"]["slice_rounds"], config.SUMMARY_SLICE_ROUNDS)
+        self.assertEqual(mem["summary"]["auto_rounds"], config.SUMMARY_AUTO_ROUNDS)
+        self.assertIsNone(mem["vector"]["top_k"])  # 恢复默认召回
+        self.assertEqual(mem["vector"]["recent_n"], config.VECTOR_MEMORY_RECENT_N)
+        # 内容保留（开关不删内容）
+        self.assertEqual([f["text"] for f in mem["facts"]], ["主角叫艾伦"])
+        self.assertEqual(mem["summary"]["text"], "艾伦出发去冒险。")
+
+    def test_memory_switches_disable_keeps_content(self):
+        """关闭智能总结：关闭 2/3/4 开关，但内容保留、0/1 不受影响。"""
+        storage.set_session_facts(self.username, self.sid, [{"text": "主角叫艾伦"}])
+        storage.set_session_summary(self.username, self.sid, "艾伦出发去冒险。", last_round=2)
+        storage.set_session_vector_config(self.username, self.sid, enabled=True, top_k=5)
+        mem = storage.set_session_memory_switches(
+            self.username, self.sid,
+            facts_enabled=False, summary_enabled=False, vector_enabled=False,
+        )
+        self.assertFalse(mem["facts_enabled"])
+        self.assertFalse(mem["summary"]["enabled"])
+        self.assertFalse(mem["vector"]["enabled"])
+        # 内容保留
+        self.assertEqual([f["text"] for f in mem["facts"]], ["主角叫艾伦"])
+        self.assertEqual(mem["summary"]["text"], "艾伦出发去冒险。")
+        self.assertEqual(mem["vector"]["top_k"], 5)
+
     def test_vector_config_top_k_zero(self):
         mem = storage.set_session_vector_config(self.username, self.sid, top_k=0, enabled=True)
         self.assertEqual(mem["vector"]["top_k"], 0)  # 0 不被吞
@@ -300,33 +338,50 @@ class TestMemoryEngine(unittest.TestCase):
         _, kwargs = fake_vm.build_history.call_args
         self.assertEqual(kwargs["top_k"], 5)
 
-    def test_build_context_n_zero_bypasses_vector_and_summary(self):
-        """N=0 全量模式：绕过向量检索；摘要层不上传（已总结文本保留在库）。"""
+    def test_build_context_n_zero_full_window_keeps_vector_and_summary(self):
+        """N=0 全量模式：不再绕过向量与摘要——向量照常召回、摘要照常注入。"""
         storage.set_session_card(self.username, self.sid, "你是勇敢的骑士。", source="paste")
         storage.set_session_facts(self.username, self.sid, [{"text": "主角叫艾伦"}])
         storage.set_session_summary(self.username, self.sid, "艾伦出发去冒险。", last_round=2)
         storage.set_session_vector_config(self.username, self.sid, recent_n=0, enabled=True, top_k=5)
         fake_vm = mock.MagicMock()
+        fake_vm.build_history.return_value = [
+            {"role": "user", "content": "早期提问", "_src": "vector"},
+            {"role": "assistant", "content": "早期回答", "_src": "vector"},
+        ]
         with mock.patch("vector_memory.get_instance", return_value=fake_vm):
             ctx = memory_engine.build_context(
                 self.username, self.sid, self._msgs(3), data={"model": "deepseek-chat"}
             )
-        fake_vm.build_history.assert_not_called()  # 完全绕过向量
+        fake_vm.build_history.assert_called()  # N=0 照常向量召回
+        # N=0：最近窗口尽量塞满（recent_rounds 极大，内部钳制到全部轮次）
+        _, kwargs = fake_vm.build_history.call_args
+        self.assertGreaterEqual(kwargs["recent_rounds"], 10 ** 6)
         contents = [m["content"] for m in ctx]
-        self.assertTrue(any("骑士" in c for c in contents))   # ① 卡照常
+        self.assertTrue(any("骑士" in c for c in contents))      # ① 卡照常
         self.assertTrue(any("关键事实" in c for c in contents))  # ② 事实照常
-        self.assertFalse(any("剧情摘要" in c for c in contents))  # ③ 摘要不上传
+        self.assertTrue(any("剧情摘要" in c for c in contents))  # ③ 摘要照常注入
+        self.assertTrue(any("早期提问" in c for c in contents))  # ④ 向量片段在前
         # 已总结文本保留在库
         mem = storage.get_session_memory(self.username, self.sid)
         self.assertEqual(mem["summary"]["text"], "艾伦出发去冒险。")
 
-    def test_should_auto_summary_disabled_when_n_zero(self):
-        """N=0 全量模式：自动总结不触发。"""
+    def test_should_auto_summary_enabled_when_n_zero(self):
+        """N=0 全量模式：自动总结照常触发（N 不再影响摘要开关）。"""
         storage.set_session_summary(self.username, self.sid, "摘要", last_round=1)
         for i in range(30):
             storage.append_message(self.username, self.sid, "user", f"q{i}")
             storage.append_message(self.username, self.sid, "assistant", f"a{i}")
         storage.set_session_vector_config(self.username, self.sid, recent_n=0)
+        self.assertTrue(memory_engine.should_auto_summary(self.username, self.sid))
+
+    def test_should_auto_summary_disabled_when_switch_off(self):
+        """剧情摘要开关关闭：自动总结不触发（与 N 无关）。"""
+        storage.set_session_summary(self.username, self.sid, "摘要", last_round=1)
+        for i in range(30):
+            storage.append_message(self.username, self.sid, "user", f"q{i}")
+            storage.append_message(self.username, self.sid, "assistant", f"a{i}")
+        storage.set_session_memory_switches(self.username, self.sid, summary_enabled=False)
         self.assertFalse(memory_engine.should_auto_summary(self.username, self.sid))
 
     def test_extract_facts_merge_and_dedup(self):
@@ -734,13 +789,25 @@ class TestAPI(unittest.TestCase):
         r = self.client.post(f"/api/sessions/{sid}/summary", json={})
         self.assertEqual(r.status_code, 400)
 
-    def test_summary_api_rejected_when_n_zero(self):
-        """N=0 全量模式：手动总结 API 拒绝（总结功能完全停用）。"""
+    def test_summary_api_respects_switch_not_n_zero(self):
+        """N=0 不再停用总结：手动总结照常执行；只有剧情摘要开关关闭才拒绝。"""
         sid = self._new_session()
+        for i in range(4):
+            self.client.post(f"/api/sessions/{sid}/msg",
+                             json={"role": "user", "content": f"提问{i}"})
+            self.client.post(f"/api/sessions/{sid}/msg",
+                             json={"role": "assistant", "content": f"回答{i}"})
+        # N=0 全量模式：手动总结照常执行（mock LLM 返回 200）
         self.client.post(f"/api/sessions/{sid}/vector-config", json={"recent_n": 0})
+        with mock.patch("llm_client.chat", return_value="一段剧情摘要"):
+            r = self.client.post(f"/api/sessions/{sid}/summary", json={"api_key": "fake-key"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json()["summary"], "一段剧情摘要")
+        # 关闭剧情摘要开关：手动总结拒绝
+        self.client.post(f"/api/sessions/{sid}/memory-switches", json={"summary_enabled": False})
         r = self.client.post(f"/api/sessions/{sid}/summary", json={"api_key": "fake-key"})
         self.assertEqual(r.status_code, 400)
-        self.assertIn("停用", r.get_json()["error"])
+        self.assertIn("关闭", r.get_json()["error"])
 
     def test_refresh_api_mock_llm(self):
         sid = self._new_session()

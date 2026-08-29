@@ -141,12 +141,10 @@ async function init() {
   };
   window.renderVmModelBox = renderVmModelBox; // 供 applyVmToUI 在切换会话时刷新
 
-  // 启用开关与 N 设置：未选模型时整行收起（带动画）
+  // 启用开关（置于卡片右上角）与 N 设置：未选模型时收起 TopK 行、禁用开关
   const syncVmUi = () => {
     const hasModel = !!vmLoadModel();
-    const tf = $("#vmToggleField");
     const kf = $("#vmTopKField");
-    if (tf) tf.classList.toggle("vm-hidden", !hasModel);
     if (kf) kf.classList.toggle("vm-hidden", !hasModel);
     $("#vmEnabled").disabled = !hasModel;
     // top_k 仅在「已选模型且启用向量记忆」时可编辑；N 独立于向量记忆，始终可用
@@ -154,6 +152,8 @@ async function init() {
     const topK = $("#vmTopK");
     if (topK) topK.disabled = !hasModel || !enabled;
     if (!hasModel) $("#vmEnabled").checked = false;
+    // 开关/模型变化后同步记忆页的卡片置灰态
+    if (window.refreshMemoryCardStates) window.refreshMemoryCardStates();
   };
 
   const recentField = getRecentNField();
@@ -436,6 +436,46 @@ async function init() {
         localStorage.setItem(SIDEBAR_W_KEY, String(Math.round(sidebar.getBoundingClientRect().width)));
         resizer.classList.remove("active");
         sidebar.classList.remove("resizing");
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    });
+  }
+  // 设置面板宽度拖拽调整（仅桌面横屏；移动端全宽抽屉不启用，手柄在响应式中隐藏）
+  {
+    const panel = document.querySelector(".settings-panel");
+    const resizer = document.querySelector(".settings-resizer");
+    const SETTINGS_W_KEY = "dsw_settings_width";
+    const MIN_W = 320;   // 下界：保证设置内容可读
+    const MAX_W = 720;   // 上界：避免过宽挤压对话区
+    const applySettingsWidth = (px) => {
+      // 上限同时受视口约束（面板本身还有 max-width:90vw），取两者较小者
+      const cap = Math.min(MAX_W, Math.round(window.innerWidth * 0.9));
+      px = Math.max(MIN_W, Math.min(cap, Math.round(px)));
+      document.documentElement.style.setProperty("--settings-width", px + "px");
+      return px;
+    };
+    // 恢复上次保存的宽度
+    const saved = parseInt(localStorage.getItem(SETTINGS_W_KEY), 10);
+    if (!isNaN(saved) && saved >= MIN_W && saved <= MAX_W) applySettingsWidth(saved);
+    if (!resizer) return;
+    resizer.addEventListener("mousedown", (e) => {
+      if (isMobileLayout()) return;
+      e.preventDefault();
+      resizer.classList.add("active");
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      const startX = e.clientX;
+      const startW = panel.getBoundingClientRect().width;
+      // 面板在右侧：鼠标向左拖（clientX 减小）时宽度增大
+      const onMove = (ev) => applySettingsWidth(startW + (startX - ev.clientX));
+      const onUp = () => {
+        localStorage.setItem(SETTINGS_W_KEY, String(Math.round(panel.getBoundingClientRect().width)));
+        resizer.classList.remove("active");
         document.body.style.cursor = "";
         document.body.style.userSelect = "";
         window.removeEventListener("mousemove", onMove);

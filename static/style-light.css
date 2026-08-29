@@ -188,7 +188,8 @@ body {
   cursor: col-resize;
   z-index: 5;
 }
-.sidebar-resizer::before {
+.sidebar-resizer::before,
+.settings-resizer::before {
   content: "";
   position: absolute;
   top: 0;
@@ -200,13 +201,28 @@ body {
   transition: background 0.2s ease;
 }
 .sidebar-resizer:hover::before,
-.sidebar-resizer.active::before {
+.sidebar-resizer.active::before,
+.settings-resizer:hover::before,
+.settings-resizer.active::before {
   /* 半透明主题色，分界线更柔和；跟随主题色变量变化 */
   background: color-mix(in srgb, var(--accent, #4f7cff) 50%, transparent);
 }
 /* 收起时隐藏把手；拖拽中禁用宽度过渡避免滞后 */
 .app[data-sidebar="collapsed"] .sidebar-resizer { display: none; }
 .sidebar.resizing { transition: none; }
+
+/* 设置面板宽度拖拽把手（复用左侧栏手柄样式）。
+   作为 .settings-panel 的子元素、以面板左缘定位，居中压在分界线上。 */
+.settings-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  /* 面板右缘固定，故用 right 定位：把手右缘 = 面板左缘 + 3px */
+  right: calc(100% - 3px);
+  width: 7px;
+  cursor: col-resize;
+  z-index: 6;
+}
 .sidebar-section { flex: 1; }
 .sidebar-head {
   display: flex;
@@ -438,7 +454,7 @@ body {
   position: fixed;
   top: 0;
   right: 0;
-  width: 400px;
+  width: var(--settings-width, 400px);
   max-width: 90vw;
   height: 100vh;
   background: var(--bg-panel);
@@ -608,10 +624,12 @@ body {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
   transition: transform 0.2s;
 }
-.param-field .switch-row input[type="checkbox"]:checked + .switch-track {
+.param-field .switch-row input[type="checkbox"]:checked + .switch-track,
+.memory-card-switch input[type="checkbox"]:checked + .switch-track {
   background: var(--accent);
 }
-.param-field .switch-row input[type="checkbox"]:checked + .switch-track .switch-thumb {
+.param-field .switch-row input[type="checkbox"]:checked + .switch-track .switch-thumb,
+.memory-card-switch input[type="checkbox"]:checked + .switch-track .switch-thumb {
   transform: translateX(20px);
 }
 
@@ -683,6 +701,57 @@ body {
   border-radius: 10px;
   padding: 2px 8px;
   margin-top: -2px;
+}
+/* 顶部批量操作按钮（一键配置 / 关闭智能总结） */
+.memory-master-bar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.memory-master-bar .mini-btn {
+  height: 30px;
+  line-height: 1;
+  white-space: nowrap;
+}
+/* 卡片头部：标题在左，层标签 + 开关在右（右上角开关） */
+.memory-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.memory-head-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+.memory-card-head .memory-layer-tag { float: none; margin-top: 0; }
+/* 卡片右上角开关：覆盖 .settings-group label 的纵向 flex 布局 */
+.memory-card-switch {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  margin: 0;
+}
+.memory-card-switch input[type="checkbox"] { display: none; }
+/* 卡片关闭态：整体置灰、内容不可编辑（右上角开关保持可点，用于重新打开） */
+.settings-group.memory-off { opacity: 0.6; }
+.settings-group.memory-off textarea,
+.settings-group.memory-off input,
+.settings-group.memory-off select,
+.settings-group.memory-off button {
+  pointer-events: none;
+  color: var(--text-sidebar-dim);
+  background: rgba(128, 128, 128, 0.1);
+  cursor: not-allowed;
+}
+.settings-group.memory-off .memory-card-switch {
+  opacity: 1;
+  pointer-events: auto;
+  cursor: pointer;
 }
 .memory-empty p {
   margin: 0;

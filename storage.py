@@ -100,8 +100,9 @@ def _default_memory():
     return {
         "card": None,      # 核心设定卡 {"content","source","updated_at"}
         "facts": [],       # 动态关键事实 [{"text","ts"}]
-        "summary": None,   # 剧情摘要 {"text","summarized_ts","last_round"}
-        "recent_n": config.VECTOR_MEMORY_RECENT_N,
+        "facts_enabled": True,  # ② 动态关键事实开关（关闭时保留内容但停止注入/维护）
+        "summary": None,   # 剧情摘要 {"text","summarized_ts","last_round","enabled",...}
+        "recent_n": config.MEMORY_RECENT_N_DEFAULT,  # 最近 N 轮（新会话默认 0 = 全量塞满）
         "vector": _parse_vm(None),  # 向量记忆设置（迁移自旧 vm）
     }
 
@@ -134,6 +135,7 @@ def _parse_memory(raw):
             {"text": str(f.get("text", "")).strip(), "ts": float(f.get("ts", 0))}
             for f in raw["facts"] if isinstance(f, dict) and str(f.get("text", "")).strip()
         ]
+    mem["facts_enabled"] = bool(raw.get("facts_enabled", True))
     s = raw.get("summary")
     mem["summary"] = _parse_summary(s) if s is not None else None
     vec_cfg = raw.get("vector") if isinstance(raw.get("vector"), dict) else raw.get("vm")
@@ -156,11 +158,13 @@ def _parse_summary(s):
         "last_round": 0,
         "slice_rounds": config.SUMMARY_SLICE_ROUNDS,
         "auto_rounds": config.SUMMARY_AUTO_ROUNDS,
+        "enabled": True,  # ③ 剧情摘要开关（关闭时保留内容但停止注入/自动/手动总结）
     }
     if not isinstance(s, dict):
         return default
     out = dict(default)
     out["text"] = str(s.get("text") or "").strip()
+    out["enabled"] = bool(s.get("enabled", True))
     try:
         out["summarized_ts"] = float(s["summarized_ts"]) if s.get("summarized_ts") is not None else None
     except (TypeError, ValueError):
@@ -479,6 +483,7 @@ def set_session_summary(username, sid, text, last_round=None):
             "last_round": last_round if last_round is not None else old.get("last_round", 0),
             "slice_rounds": old.get("slice_rounds"),
             "auto_rounds": old.get("auto_rounds"),
+            "enabled": old.get("enabled", True),
         }
     else:
         memory["summary"] = None
@@ -486,8 +491,8 @@ def set_session_summary(username, sid, text, last_round=None):
     return memory
 
 
-def set_session_summary_config(username, sid, slice_rounds=None, auto_rounds=None):
-    """设置会话剧情摘要的触发参数（slice_rounds 切片宽度 / auto_rounds 自动触发阈值）。
+def set_session_summary_config(username, sid, slice_rounds=None, auto_rounds=None, enabled=None):
+    """设置会话剧情摘要的触发参数（slice_rounds 切片宽度 / auto_rounds 自动触发阈值 / enabled 开关）。
 
     只更新传入的参数，其余保留。返回新 memory 或 None（会话不存在）。
     """
@@ -510,9 +515,49 @@ def set_session_summary_config(username, sid, slice_rounds=None, auto_rounds=Non
             changed = True
         except (TypeError, ValueError):
             pass
+    if enabled is not None:
+        s = dict(s)
+        s["enabled"] = bool(enabled)
+        changed = True
     if changed:
         memory["summary"] = _parse_summary(s)
         save_session_memory(username, sid, memory)
+    return memory
+
+
+def set_session_memory_switches(username, sid, facts_enabled=None, summary_enabled=None,
+                                vector_enabled=None, reset_values=False):
+    """批量设置记忆卡片开关（2/3/4 层），供「一键配置 / 关闭智能总结」与单卡开关调用。
+
+    reset_values=True（一键配置）时把数值恢复默认：最近 N 轮=10、
+    摘要切片/自动间隔、向量 TopK 与 recent_n 恢复默认。
+    只更新传入的字段，其余保留。返回新 memory 或 None（会话不存在）。
+    """
+    memory = get_session_memory(username, sid)
+    if memory is None:
+        return None
+    if facts_enabled is not None:
+        memory["facts_enabled"] = bool(facts_enabled)
+    if summary_enabled is not None:
+        s = dict(memory.get("summary") or {})
+        s["enabled"] = bool(summary_enabled)
+        memory["summary"] = _parse_summary(s)
+    if vector_enabled is not None:
+        vec = dict(memory.get("vector") or _parse_vm(None))
+        vec["enabled"] = bool(vector_enabled)
+        memory["vector"] = _parse_vm(vec)
+    if reset_values:
+        # 最近 N 轮恢复为 10（用户指定的一键配置值）
+        memory["recent_n"] = config.VECTOR_MEMORY_RECENT_N
+        s = dict(memory.get("summary") or {})
+        s["slice_rounds"] = config.SUMMARY_SLICE_ROUNDS
+        s["auto_rounds"] = config.SUMMARY_AUTO_ROUNDS
+        memory["summary"] = _parse_summary(s)
+        vec = dict(memory.get("vector") or _parse_vm(None))
+        vec["top_k"] = None          # 恢复默认召回
+        vec["recent_n"] = config.VECTOR_MEMORY_RECENT_N
+        memory["vector"] = _parse_vm(vec)
+    save_session_memory(username, sid, memory)
     return memory
 
 

@@ -586,13 +586,10 @@ def api_run_summary(sid):
     stored = storage.get_session(username, sid)
     if not stored:
         return jsonify({"error": "会话不存在"}), 404
-    # N=0 全量模式：剧情总结功能完全停用（手动也拒绝）
+    # 剧情摘要开关关闭：手动总结也拒绝
     mem = storage.get_session_memory(username, sid) or {}
-    recent_n = mem.get("recent_n")
-    if recent_n is None:
-        recent_n = (mem.get("vector") or {}).get("recent_n")
-    if recent_n == 0:
-        return jsonify({"error": "最近 N 轮为 0（全量模式）时已停用剧情总结"}), 400
+    if not (mem.get("summary") or {}).get("enabled", True):
+        return jsonify({"error": "剧情摘要已关闭，无法手动总结"}), 400
     slice_rounds = data.get("slice_rounds")
     try:
         slice_rounds = int(slice_rounds) if slice_rounds else None
@@ -610,7 +607,7 @@ def api_run_summary(sid):
 def api_summary_config(sid):
     """读取 / 设置会话剧情摘要的触发参数。
 
-    GET 返回当前配置；POST body 可选 {"slice_rounds": int, "auto_rounds": int}，
+    GET 返回当前配置；POST body 可选 {"slice_rounds": int, "auto_rounds": int, "enabled": bool}，
     传哪个更新哪个。auto_rounds=0 表示关闭自动总结（仅手动）。
     """
     username = session["username"]
@@ -622,14 +619,16 @@ def api_summary_config(sid):
         return jsonify({
             "slice_rounds": s.get("slice_rounds"),
             "auto_rounds": s.get("auto_rounds"),
+            "enabled": s.get("enabled", True),
         })
     data = request.get_json(force=True, silent=True) or {}
     slice_rounds = data.get("slice_rounds")
     auto_rounds = data.get("auto_rounds")
-    if slice_rounds is None and auto_rounds is None:
-        return jsonify({"error": "至少提供 slice_rounds 或 auto_rounds 之一"}), 400
+    enabled = data.get("enabled")
+    if slice_rounds is None and auto_rounds is None and enabled is None:
+        return jsonify({"error": "至少提供 slice_rounds / auto_rounds / enabled 之一"}), 400
     mem = storage.set_session_summary_config(
-        username, sid, slice_rounds=slice_rounds, auto_rounds=auto_rounds
+        username, sid, slice_rounds=slice_rounds, auto_rounds=auto_rounds, enabled=enabled
     )
     if mem is None:
         return jsonify({"error": "会话不存在"}), 404
@@ -637,7 +636,36 @@ def api_summary_config(sid):
     return jsonify({
         "slice_rounds": s.get("slice_rounds"),
         "auto_rounds": s.get("auto_rounds"),
+        "enabled": s.get("enabled", True),
     })
+
+
+@app.route("/api/sessions/<sid>/memory-switches", methods=["POST"])
+def api_memory_switches(sid):
+    """批量设置记忆卡片开关（2/3/4 层）与数值恢复，供「一键配置 / 关闭智能总结 / 单卡开关」调用。
+
+    body 可选：
+      facts_enabled:   bool  ② 动态关键事实开关
+      summary_enabled: bool  ③ 剧情摘要开关
+      vector_enabled:  bool  ④ 向量记忆开关
+      reset_values:    bool  一键配置：恢复数值默认（最近 N 轮=10、摘要切片/自动间隔、向量 TopK/recent_n）
+    返回完整 memory 结构。
+    """
+    username = session["username"]
+    data = request.get_json(force=True, silent=True) or {}
+    if not any(k in data for k in ("facts_enabled", "summary_enabled", "vector_enabled", "reset_values")):
+        return jsonify({"error": "缺少开关参数"}), 400
+    mem = storage.set_session_memory_switches(
+        username,
+        sid,
+        facts_enabled=data.get("facts_enabled"),
+        summary_enabled=data.get("summary_enabled"),
+        vector_enabled=data.get("vector_enabled"),
+        reset_values=bool(data.get("reset_values")),
+    )
+    if mem is None:
+        return jsonify({"error": "会话不存在"}), 404
+    return jsonify({"memory": mem})
 
 
 @app.route("/api/sessions/<sid>/vector-config", methods=["GET", "POST"])

@@ -74,19 +74,14 @@ def _context_n(memory, data):
         candidates.append(mem.get("recent_n"))
     if vec_cfg.get("recent_n") is not None:
         candidates.append(vec_cfg.get("recent_n"))
-    candidates.append(config.VECTOR_MEMORY_RECENT_N)
+    candidates.append(config.MEMORY_RECENT_N_DEFAULT)
     for raw in candidates:
         try:
             n = int(raw)
             return max(0, min(n, 1000))
         except (TypeError, ValueError):
             continue
-    return config.VECTOR_MEMORY_RECENT_N
-
-
-def _recent_n_is_zero(memory, data):
-    """判断最近 N 轮是否为 0（全量模式）。请求参数优先于会话配置。"""
-    return _context_n(memory, data) == 0
+    return config.MEMORY_RECENT_N_DEFAULT
 
 
 # ------------------------- 上下文拼接（核心） -------------------------
@@ -121,15 +116,16 @@ def build_context(username, sid, user_messages, data=None, params=None, stored_m
     if card and str(card.get("content", "")).strip():
         layers.append({"role": _CARD_ROLE, "content": _card_block(card)})
 
-    # ② 动态关键事实（无条件）
+    # ② 动态关键事实（开关开启时无条件注入）
     facts = (memory or {}).get("facts") or []
-    if facts:
+    facts_enabled = bool((memory or {}).get("facts_enabled", True))
+    if facts and facts_enabled:
         layers.append({"role": _FACTS_ROLE, "content": _facts_block(facts)})
 
-    # ③ 剧情摘要（无条件；N=0 全量模式除外：总结停用，已总结文本保留但不上传）
+    # ③ 剧情摘要（开关开启时无条件注入；N 值不影响是否注入）
     summary = (memory or {}).get("summary")
-    if (summary and str(summary.get("text", "")).strip()
-            and not _recent_n_is_zero(memory, data)):
+    summary_enabled = bool((summary or {}).get("enabled", True))
+    if (summary and str(summary.get("text", "")).strip() and summary_enabled):
         layers.append({"role": _SUMMARY_ROLE, "content": _summary_block(summary)})
 
     # ④ 向量检索片段（按需）+ 最近窗口
@@ -157,11 +153,12 @@ def _summary_block(summary):
 def _build_history(chat, sid, data, params, stored_msgs, memory):
     """第④层向量检索 + 最近窗口拼接。向量不可用/未启用时退化为纯最近窗口截断。
 
-    N=0（全量模式）：完全绕过向量记忆，纯全量 + 字数截断。
+    N=0（全量模式）：不再绕过向量记忆——向量仍按用户参数召回，
+    最近窗口尽量塞满（按窗口预算估计后砍掉较早部分）。
     """
     vec_cfg = (memory or {}).get("vector") or {}
     enabled = _vector_enabled(memory, data, sid)
-    if _recent_n_is_zero(memory, data) or not enabled or not sid:
+    if not enabled or not sid:
         return _truncate_long(chat, data.get("model") if data else None, params)
     try:
         vm = vector_memory.get_instance(
@@ -201,15 +198,34 @@ def _build_history(chat, sid, data, params, stored_msgs, memory):
             top_k = int(session_top_k)
         except (TypeError, ValueError):
             top_k = None
+    if n_rounds == 0:
+        # N=0：最近窗口尽量塞满（窗口预算估算），build_history 内部按预算砍掉最早部分；
+        # 向量检索照常按用户参数召回（full_messages 展开的早期片段保留在结果前面）。
+        recent_rounds = 10 ** 6  # 超过总轮数，build_history 内部钳制到全部轮次
+        max_chars = _history_budget(data.get("model") if data else None, params)
+    else:
+        recent_rounds = n_rounds
+        max_chars = config.NO_VM_MAX_CHARS
     return vm.build_history(
         chat,
         session_id=sid,
         query=query,
-        recent_rounds=n_rounds,
+        recent_rounds=recent_rounds,
         top_k=top_k,
         full_messages=full,
-        max_chars=config.NO_VM_MAX_CHARS,
+        max_chars=max_chars,
     )
+
+
+def _history_budget(model=None, params=None):
+    """按模型上下文窗口估算「最近对话窗口」可用的字符预算（与 _truncate_long 一致）。"""
+    if params is None:
+        params = {}
+    window = config.MODEL_CONTEXT_WINDOW.get(model or "", config.NO_VM_DEFAULT_WINDOW)
+    max_tokens = int(params.get("max_tokens") or config.DEFAULT_PARAMS.get("max_tokens", 2048))
+    sys_tokens = len(params.get("system_prompt") or "") / config.CHARS_PER_TOKEN
+    avail_tokens = max(0, window - max_tokens - sys_tokens)
+    return int(avail_tokens * config.CHARS_PER_TOKEN * config.NO_VM_CONTEXT_RATIO)
 
 
 def _vm_model_dir(data):
@@ -224,14 +240,7 @@ def os_join_models(vm_model):
 
 def _truncate_long(chat, model=None, params=None):
     """向量记忆未启用/不可用时：按上下文窗口动态保留最近对话（只留最近部分）。"""
-    budget = config.NO_VM_MAX_CHARS
-    if params is None:
-        params = {}
-    window = config.MODEL_CONTEXT_WINDOW.get(model or "", config.NO_VM_DEFAULT_WINDOW)
-    max_tokens = int(params.get("max_tokens") or config.DEFAULT_PARAMS.get("max_tokens", 2048))
-    sys_tokens = len(params.get("system_prompt") or "") / config.CHARS_PER_TOKEN
-    avail_tokens = max(0, window - max_tokens - sys_tokens)
-    budget = int(avail_tokens * config.CHARS_PER_TOKEN * config.NO_VM_CONTEXT_RATIO)
+    budget = _history_budget(model, params)
     out = list(chat)
     while (sum(len(m["content"]) for m in out) > budget or len(out) > config.NO_VM_MAX_MESSAGES) and len(out) > 1:
         out.pop(0)
@@ -545,10 +554,10 @@ def should_auto_summary(username, sid, stored_msgs=None):
     memory = _get_memory(username, sid)
     if memory is None:
         return False
-    # N=0 全量模式：剧情总结功能完全停用（自动不触发）
-    if _recent_n_is_zero(memory, None):
-        return False
+    # 剧情摘要开关关闭：自动总结不触发（已总结文本保留，只是不上传）
     summary = memory.get("summary") or {}
+    if not summary.get("enabled", True):
+        return False
     auto_rounds = summary.get("auto_rounds")
     if auto_rounds is None:
         auto_rounds = config.SUMMARY_AUTO_ROUNDS
@@ -579,6 +588,9 @@ def extract_facts_for_session(api_key, username, sid, stored_msgs):
         return None
     memory = _get_memory(username, sid)
     if memory is None:
+        return None
+    # 动态关键事实开关关闭：不自动抽取（已有事实保留，只是不上传）
+    if not memory.get("facts_enabled", True):
         return None
     stored = stored_msgs if stored_msgs is not None else (
         storage.get_session(username, sid).get("messages", []) if storage.get_session(username, sid) else []

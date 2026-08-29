@@ -21,7 +21,7 @@ function resetMemoryPanel() {
   MEMORY_STATE = null;
   const empty = memEl("memoryEmptyHint");
   if (empty) empty.classList.remove("hidden");
-  ["memorySystemGroup", "memoryContextGroup", "memoryCardGroup", "memoryFactsGroup", "memorySummaryGroup", "memoryVectorGroup"].forEach((id) => {
+  ["memorySystemGroup", "memoryCardGroup", "memoryFactsGroup", "memorySummaryGroup", "memoryVectorGroup"].forEach((id) => {
     const el = memEl(id);
     if (el) el.classList.add("hidden");
   });
@@ -31,7 +31,7 @@ function resetMemoryPanel() {
 // 打开设置面板 / 切换会话时调用；无会话时显示占位提示。
 async function loadMemoryPanel() {
   const empty = memEl("memoryEmptyHint");
-  const groups = ["memorySystemGroup", "memoryContextGroup", "memoryCardGroup", "memoryFactsGroup", "memorySummaryGroup", "memoryVectorGroup"].map(memEl);
+  const groups = ["memorySystemGroup", "memoryCardGroup", "memoryFactsGroup", "memorySummaryGroup", "memoryVectorGroup"].map(memEl);
 
   if (!currentSessionId) {
     resetMemoryPanel();
@@ -102,27 +102,14 @@ function renderMemoryPanel() {
 
   // ③ 剧情摘要
   const summary = mem.summary || {};
-  // N=0 全量模式：剧情总结完全停用（按钮禁用 + 提示）
-  const zeroMode = recentN === 0;
-  const summaryRunBtn = memEl("memorySummaryRunBtn");
-  if (summaryRunBtn) {
-    summaryRunBtn.disabled = zeroMode;
-    summaryRunBtn.title = zeroMode ? "N=0（全量模式）时已停用剧情总结" : "";
-  }
-  const summarySaveBtn = memEl("memorySummarySaveConfigBtn");
-  if (summarySaveBtn) {
-    summarySaveBtn.disabled = zeroMode;
-    summarySaveBtn.title = zeroMode ? "N=0（全量模式）时已停用剧情总结" : "";
-  }
   const summaryText = memEl("memorySummaryText");
   if (summaryText) summaryText.value = summary.text || "";
   const meta = memEl("memorySummaryMeta");
   if (meta) {
     const last = summary.last_round;
-    const zeroTip = zeroMode ? "（N=0 全量模式：总结停用，摘要不上传）" : "";
     meta.textContent = (last
       ? "已总结至第 " + last + " 轮" + (summary.slice_rounds ? "（切片 " + summary.slice_rounds + " 轮）" : "")
-      : "尚未总结") + zeroTip;
+      : "尚未总结");
   }
   const sliceInput = memEl("memorySummarySlice");
   if (sliceInput && summary.slice_rounds !== undefined && summary.slice_rounds !== null) {
@@ -141,7 +128,7 @@ function renderMemoryPanel() {
     topK.value = (vec.top_k === null || vec.top_k === undefined) ? "" : vec.top_k;
     topK.disabled = !vec.enabled;
   }
-  syncMemoryVectorField();
+  refreshMemoryCardStates();
 }
 
 // 向量记忆层：模型选择/开关/N 的可见性与禁用由 main.js（syncVmUi）管理，
@@ -153,6 +140,35 @@ function syncMemoryVectorField() {
   const hasModel = !!(window.vmLoadModel && window.vmLoadModel());
   if (topKField) topKField.classList.toggle("vm-hidden", !hasModel);
   if (topK) topK.disabled = !hasModel || !(en && en.checked);
+}
+
+// 同步卡片 2/3/4 的开关状态与置灰（内容保留但不可编辑）。
+// 在渲染完成、开关变化、一键配置/关闭智能总结后即时调用；
+// 通过操作 checkbox 的 checked 触发 CSS 过渡，让开关动画即时生效（无需刷新）。
+function refreshMemoryCardStates() {
+  const mem = MEMORY_STATE || {};
+
+  // ② 动态关键事实
+  const factsEnabled = mem.facts_enabled !== false;
+  const factsSwitch = memEl("memoryFactsEnabled");
+  if (factsSwitch) factsSwitch.checked = factsEnabled;
+  const factsGroup = memEl("memoryFactsGroup");
+  if (factsGroup) factsGroup.classList.toggle("memory-off", !factsEnabled);
+
+  // ③ 剧情摘要
+  const summary = mem.summary || {};
+  const summaryEnabled = summary.enabled !== false;
+  const summarySwitch = memEl("memorySummaryEnabled");
+  if (summarySwitch) summarySwitch.checked = summaryEnabled;
+  const summaryGroup = memEl("memorySummaryGroup");
+  if (summaryGroup) summaryGroup.classList.toggle("memory-off", !summaryEnabled);
+
+  // ④ 向量记忆：开关由 main.js / chat.js（vmEnabled）管理，这里按可见开关态同步置灰与 top_k 禁用态
+  const vectorSwitch = memEl("vmEnabled");
+  const vecEnabled = vectorSwitch ? !!vectorSwitch.checked : !!(mem.vector || {}).enabled;
+  const vectorGroup = memEl("memoryVectorGroup");
+  if (vectorGroup) vectorGroup.classList.toggle("memory-off", !vecEnabled);
+  syncMemoryVectorField();
 }
 
 // 刷新角色卡库下拉框（跨会话复用的人物卡）
@@ -365,6 +381,110 @@ function bindMemoryVectorTopK() {
   });
 }
 
+// 顶部批量操作：一键配置（打开 2/3/4 开关 + 恢复默认值）/ 关闭智能总结（关闭 2/3/4，0/1 继续生效）
+function bindMemoryMasterButtons() {
+  const oneClick = memEl("memoryOneClickBtn");
+  if (oneClick) {
+    oneClick.onclick = async () => {
+      if (!currentSessionId) return showToast("请先选择对话");
+      oneClick.disabled = true;
+      try {
+        const r = await apiPost("/api/sessions/" + currentSessionId + "/memory-switches", {
+          facts_enabled: true,
+          summary_enabled: true,
+          vector_enabled: true,
+          reset_values: true,
+        });
+        if (r && r.error) return showToast(r.error);
+        MEMORY_STATE = r.memory || MEMORY_STATE;
+        // 程序化改开关不触发 change 事件，手动同步内部状态与开关动画
+        if (window.vmSetEnabled) window.vmSetEnabled(true);
+        if (window.vmSaveN) window.vmSaveN((r.memory || {}).recent_n);
+        const en = memEl("vmEnabled");
+        if (en) en.checked = true;
+        refreshMemoryCardStates();
+        showToast("一键配置已应用");
+      } catch (_) {
+        showToast("配置失败");
+      } finally {
+        oneClick.disabled = false;
+      }
+    };
+  }
+
+  const disableBtn = memEl("memoryDisableSmartBtn");
+  if (disableBtn) {
+    disableBtn.onclick = async () => {
+      if (!currentSessionId) return showToast("请先选择对话");
+      disableBtn.disabled = true;
+      try {
+        const r = await apiPost("/api/sessions/" + currentSessionId + "/memory-switches", {
+          facts_enabled: false,
+          summary_enabled: false,
+          vector_enabled: false,
+        });
+        if (r && r.error) return showToast(r.error);
+        MEMORY_STATE = r.memory || MEMORY_STATE;
+        if (window.vmSetEnabled) window.vmSetEnabled(false);
+        const en = memEl("vmEnabled");
+        if (en) en.checked = false;
+        refreshMemoryCardStates();
+        showToast("已关闭智能总结");
+      } catch (_) {
+        showToast("操作失败");
+      } finally {
+        disableBtn.disabled = false;
+      }
+    };
+  }
+}
+
+// 卡片 ②③ 右上角开关：点击即时带动画并持久化到后端（④ 由 main.js 处理）
+function bindMemoryCardSwitches() {
+  // ② 动态关键事实
+  const factsSwitch = memEl("memoryFactsEnabled");
+  if (factsSwitch) {
+    factsSwitch.addEventListener("change", async () => {
+      if (!currentSessionId) { refreshMemoryCardStates(); return showToast("请先选择对话"); }
+      const on = factsSwitch.checked; // CSS 过渡即时生效
+      const group = memEl("memoryFactsGroup");
+      if (group) group.classList.toggle("memory-off", !on);
+      MEMORY_STATE.facts_enabled = on;
+      try {
+        const r = await apiPost("/api/sessions/" + currentSessionId + "/memory-switches", { facts_enabled: on });
+        if (r && r.error) throw new Error(r.error);
+        MEMORY_STATE = r.memory || MEMORY_STATE;
+      } catch (e) {
+        factsSwitch.checked = !on;
+        if (group) group.classList.toggle("memory-off", on);
+        showToast(e && e.message ? e.message : "设置失败");
+      }
+    });
+  }
+
+  // ③ 剧情摘要
+  const summarySwitch = memEl("memorySummaryEnabled");
+  if (summarySwitch) {
+    summarySwitch.addEventListener("change", async () => {
+      if (!currentSessionId) { refreshMemoryCardStates(); return showToast("请先选择对话"); }
+      const on = summarySwitch.checked;
+      const group = memEl("memorySummaryGroup");
+      if (group) group.classList.toggle("memory-off", !on);
+      MEMORY_STATE = MEMORY_STATE || {};
+      MEMORY_STATE.summary = Object.assign({}, MEMORY_STATE.summary || {}, { enabled: on });
+      try {
+        const r = await apiPost("/api/sessions/" + currentSessionId + "/memory-switches", { summary_enabled: on });
+        if (r && r.error) throw new Error(r.error);
+        MEMORY_STATE = r.memory || MEMORY_STATE;
+      } catch (e) {
+        summarySwitch.checked = !on;
+        if (group) group.classList.toggle("memory-off", on);
+        showToast(e && e.message ? e.message : "设置失败");
+      }
+    });
+  }
+}
+
 /* ---------------- 初始化 ---------------- */
 
 function initMemoryPanel() {
@@ -374,6 +494,8 @@ function initMemoryPanel() {
   bindMemoryContext();
   bindMemorySummary();
   bindMemoryVectorTopK();
+  bindMemoryMasterButtons();
+  bindMemoryCardSwitches();
   // 向量开关变化时同步 top_k 禁用态（main.js 的 syncVmUi 也会调用）
   const en = memEl("vmEnabled");
   if (en) en.addEventListener("change", syncMemoryVectorField);
@@ -384,6 +506,7 @@ function initMemoryPanel() {
 window.loadMemoryPanel = loadMemoryPanel;
 window.resetMemoryPanel = resetMemoryPanel;
 window.syncMemoryVectorField = syncMemoryVectorField;
+window.refreshMemoryCardStates = refreshMemoryCardStates;
 
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", initMemoryPanel);

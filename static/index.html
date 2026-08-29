@@ -134,6 +134,7 @@
   <!-- 设置面板（右侧抽屉 + 遮罩，默认关闭） -->
   <div id="settingsOverlay" class="settings-overlay hidden"></div>
   <aside id="settingsPanel" class="settings-panel hidden" aria-hidden="true">
+    <div class="settings-resizer" title="拖动调整宽度"></div>
     <div class="settings-head">
       <span>参数设置</span>
       <button id="closeSettingsBtn" class="icon-btn" title="关闭">
@@ -226,26 +227,27 @@
     <!-- 记忆页：按记忆层级顺序放置卡片 ⓪系统提示词 ①人物卡 ②动态关键事实 ③剧情摘要 ④向量记忆 -->
     <div class="settings-page hidden" id="settingsPageMemory">
       <div class="settings-body">
+        <!-- 顶部批量操作：一键配置（打开 2/3/4 开关并恢复默认值） / 关闭智能总结（关闭 2/3/4，0/1 继续生效） -->
+        <div class="memory-master-bar">
+          <button id="memoryOneClickBtn" class="mini-btn" type="button" title="打开卡片 2/3/4 开关，并把数值恢复为默认（最近 N 轮=10）">一键配置</button>
+          <button id="memoryDisableSmartBtn" class="mini-btn" type="button" title="关闭卡片 2/3/4 的开关，保留卡片内容（0/1 的输入继续生效）">关闭智能总结</button>
+        </div>
+
         <!-- 未选中会话时的占位提示 -->
         <div id="memoryEmptyHint" class="settings-group memory-empty hidden">
           <p>尚未选择对话。打开一个会话/发送一条消息后，这里可查看与编辑该会话的五层记忆。</p>
         </div>
 
-        <!-- ⓪ 系统提示词（第 0 层，作为 system 消息最先注入） -->
+        <!-- ⓪ 系统提示词（第 0 层，作为 system 消息最先注入） + 最近 N 轮对话（上下文保留策略） -->
         <section class="settings-group" id="memorySystemGroup">
           <h3>⓪ 系统提示词 <span class="memory-layer-tag">无条件注入</span></h3>
           <textarea id="system_prompt" rows="4" placeholder="设定模型的基础行为、语气、规则与世界观…"></textarea>
           <span class="param-hint">作为系统消息随每次请求最先注入（位于人物卡之前），按会话单独保存。</span>
-        </section>
-
-        <!-- 最近 N 轮对话（独立于向量记忆的上下文保留策略） -->
-        <section class="settings-group" id="memoryContextGroup">
-          <h3>最近 N 轮对话 <span class="memory-layer-tag">上下文保留</span></h3>
           <div class="param-field">
             <label for="memoryContextN">最近 N 轮对话</label>
             <input id="memoryContextN" type="number" min="0" max="1000" step="1" />
             <button id="memoryContextSaveBtn" class="mini-btn" type="button">保存</button>
-            <span class="param-hint">保留最近 N 轮对话（一轮 = 一次提问 + 一次回答）。N = 0 表示全量模式：保留全部上下文，超出模型窗口时按字数截断，只保留静态设定与最近对话；该模式下不使用向量检索，剧情总结停用（已总结文本保留，只是不上传）。</span>
+            <span class="param-hint">保留最近 N 轮对话（一轮 = 一次提问 + 一次回答）。N = 0 表示全量模式：按模型窗口尽量保留（窗口能塞多少塞多少）。N 只决定原始对话窗口大小，与下方各卡片是否启用无关。</span>
           </div>
         </section>
 
@@ -265,17 +267,35 @@
 
         <!-- ② 动态关键事实 -->
         <section class="settings-group" id="memoryFactsGroup">
-          <h3>② 动态关键事实 <span class="memory-layer-tag">无条件注入</span></h3>
+          <h3 class="memory-card-head">
+            <span>② 动态关键事实</span>
+            <span class="memory-head-right">
+              <span class="memory-layer-tag">无条件注入</span>
+              <label class="memory-card-switch" title="启用/停用动态关键事实">
+                <input id="memoryFactsEnabled" type="checkbox" />
+                <span class="switch-track"><span class="switch-thumb"></span></span>
+              </label>
+            </span>
+          </h3>
           <div id="memoryFactsList" class="memory-facts-list"></div>
           <div class="memory-actions">
             <button id="memoryFactsRefreshBtn" class="mini-btn" type="button">手动抽取事实</button>
           </div>
-          <span class="param-hint">对话中按间隔自动抽取重要设定并去重合并；也可随时手动触发（需已填写 API Key）。</span>
+          <span class="param-hint">对话中按间隔自动抽取重要设定并去重合并；也可随时手动触发（需已填写 API Key）。关闭开关后保留已抽事实但不注入、不自动抽取。</span>
         </section>
 
         <!-- ③ 剧情摘要 -->
         <section class="settings-group" id="memorySummaryGroup">
-          <h3>③ 剧情摘要 <span class="memory-layer-tag">无条件注入</span></h3>
+          <h3 class="memory-card-head">
+            <span>③ 剧情摘要</span>
+            <span class="memory-head-right">
+              <span class="memory-layer-tag">无条件注入</span>
+              <label class="memory-card-switch" title="启用/停用剧情摘要">
+                <input id="memorySummaryEnabled" type="checkbox" />
+                <span class="switch-track"><span class="switch-thumb"></span></span>
+              </label>
+            </span>
+          </h3>
           <textarea id="memorySummaryText" class="memory-summary-text" rows="5" readonly placeholder="暂无摘要。可点击「立即总结」或等待自动总结。"></textarea>
           <div class="memory-summary-meta" id="memorySummaryMeta"></div>
           <div class="memory-actions">
@@ -290,24 +310,25 @@
             <button id="memorySummarySaveConfigBtn" class="mini-btn" type="button">保存配置</button>
             <button id="memorySummaryRunBtn" class="mini-btn" type="button">立即总结</button>
           </div>
-          <span class="param-hint">摘要按切片轮数分段总结剧情进展，随每次请求注入；自动间隔 = 每 N 轮触发一次自动总结，0 = 关闭自动总结（仅手动）。</span>
+          <span class="param-hint">摘要按切片轮数分段总结剧情进展，随每次请求注入；自动间隔 = 每 N 轮触发一次自动总结，0 = 关闭自动总结（仅手动）。关闭开关后保留已总结文本但不注入、不自动/手动总结。</span>
         </section>
 
         <!-- ④ 向量记忆 -->
         <section class="settings-group" id="memoryVectorGroup">
-          <h3>④ 向量记忆 <span class="memory-layer-tag">按需召回</span></h3>
+          <h3 class="memory-card-head">
+            <span>④ 向量记忆</span>
+            <span class="memory-head-right">
+              <span class="memory-layer-tag">按需召回</span>
+              <label class="memory-card-switch" title="启用/停用向量记忆">
+                <input id="vmEnabled" type="checkbox" />
+                <span class="switch-track"><span class="switch-thumb"></span></span>
+              </label>
+            </span>
+          </h3>
           <div class="param-field">
             <label>向量化模型</label>
             <div id="vmModelBox" class="vm-model-box"></div>
-            <span class="param-hint">长对话检索用的本地模型（后端 models 目录）；设置随当前对话单独保存，新建对话默认关闭。</span>
-          </div>
-          <div class="param-field vm-collapsible" id="vmToggleField">
-            <label for="vmEnabled">启用向量记忆</label>
-            <label class="switch-row" for="vmEnabled">
-              <input id="vmEnabled" type="checkbox" />
-              <span class="switch-track"><span class="switch-thumb"></span></span>
-            </label>
-            <span class="param-hint">关闭后不启用向量检索，对话历史按上面「最近 N 轮对话」的保留策略截断；N=0 时全量保留并按字数截断。（对话中首次打开时，加载可能稍慢）</span>
+            <span class="param-hint">长对话检索用的本地模型（后端 models 目录）；设置随当前对话单独保存，新建对话默认关闭。关闭开关后保留模型与参数配置但不再检索，卡片内容置灰不可编辑。</span>
           </div>
           <div class="param-field vm-collapsible" id="vmTopKField">
             <label for="vmTopK">召回数量 Top K</label>
