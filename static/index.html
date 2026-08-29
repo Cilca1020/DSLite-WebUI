@@ -228,7 +228,7 @@
     <div class="settings-page hidden" id="settingsPageMemory">
       <div class="settings-body">
         <!-- 顶部批量操作：一键配置（打开 2/3/4 开关并恢复默认值） / 关闭智能总结（关闭 2/3/4，0/1 继续生效） -->
-        <div class="memory-master-bar">
+        <div class="memory-master-bar" id="memoryMasterBar">
           <button id="memoryOneClickBtn" class="mini-btn" type="button" title="打开卡片 2/3/4 开关，并把数值恢复为默认（最近 N 轮=10）">一键配置</button>
           <button id="memoryDisableSmartBtn" class="mini-btn" type="button" title="关闭卡片 2/3/4 的开关，保留卡片内容（0/1 的输入继续生效）">关闭智能总结</button>
         </div>
@@ -279,9 +279,9 @@
           </h3>
           <div id="memoryFactsList" class="memory-facts-list"></div>
           <div class="memory-actions">
-            <button id="memoryFactsRefreshBtn" class="mini-btn" type="button">手动抽取事实</button>
+            <button id="memoryFactsRefreshBtn" class="mini-btn" type="button">重新总结</button>
           </div>
-          <span class="param-hint">对话中按间隔自动抽取重要设定并去重合并；也可随时手动触发（需已填写 API Key）。关闭开关后保留已抽事实但不注入、不自动抽取。</span>
+          <span class="param-hint">对话中按间隔自动抽取重要设定并去重合并；也可随时点击「重新总结」从全部历史重新抽取（需已填写 API Key）。关闭开关后保留已抽事实但不注入、不自动抽取。</span>
         </section>
 
         <!-- ③ 剧情摘要 -->
@@ -296,7 +296,7 @@
               </label>
             </span>
           </h3>
-          <textarea id="memorySummaryText" class="memory-summary-text" rows="5" readonly placeholder="暂无摘要。可点击「立即总结」或等待自动总结。"></textarea>
+          <textarea id="memorySummaryText" class="memory-summary-text" rows="5" readonly placeholder="暂无摘要。可点击「重新总结」或等待自动总结。"></textarea>
           <div class="memory-summary-meta" id="memorySummaryMeta"></div>
           <div class="memory-actions">
             <label class="memory-num-field">
@@ -308,9 +308,9 @@
               <input id="memorySummaryAuto" type="number" min="0" max="1000" step="1" />
             </label>
             <button id="memorySummarySaveConfigBtn" class="mini-btn" type="button">保存配置</button>
-            <button id="memorySummaryRunBtn" class="mini-btn" type="button">立即总结</button>
+            <button id="memorySummaryRunBtn" class="mini-btn" type="button">重新总结</button>
           </div>
-          <span class="param-hint">摘要按切片轮数分段总结剧情进展，随每次请求注入；自动间隔 = 每 N 轮触发一次自动总结，0 = 关闭自动总结（仅手动）。关闭开关后保留已总结文本但不注入、不自动/手动总结。</span>
+          <span class="param-hint">摘要按切片轮数分段总结剧情进展，随每次请求注入；自动间隔 = 每 N 轮触发一次自动总结，0 = 关闭自动总结（仅手动）。点击「重新总结」从全部历史重新生成并覆盖；关闭开关后保留已总结文本但不注入、不自动/手动总结。</span>
         </section>
 
         <!-- ④ 向量记忆 -->

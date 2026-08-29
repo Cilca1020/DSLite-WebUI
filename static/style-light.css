@@ -709,9 +709,10 @@ body {
   margin-bottom: 2px;
 }
 .memory-master-bar .mini-btn {
+  flex: 1;               /* 两个按钮平分整行宽度 */
+  justify-content: center; /* 文字水平居中 */
   height: 30px;
   line-height: 1;
-  white-space: nowrap;
 }
 /* 卡片头部：标题在左，层标签 + 开关在右（右上角开关） */
 .memory-card-head {

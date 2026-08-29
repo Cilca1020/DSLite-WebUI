@@ -577,7 +577,8 @@ def api_set_facts(sid):
 
 @app.route("/api/sessions/<sid>/summary", methods=["POST"])
 def api_run_summary(sid):
-    """手动触发一次剧情总结。body: {"slice_rounds": int}。"""
+    """手动触发一次剧情总结。body: {"slice_rounds": int, "full": bool}。
+    full=True（重新总结）：忽略上次总结点与旧摘要，从全部历史重新生成并覆盖。"""
     username = session["username"]
     data = request.get_json(force=True, silent=True) or {}
     api_key = str(data.get("api_key") or "").strip()
@@ -596,7 +597,8 @@ def api_run_summary(sid):
     except (TypeError, ValueError):
         slice_rounds = None
     result = memory_engine.run_summary(
-        api_key, username, sid, stored["messages"], slice_rounds=slice_rounds
+        api_key, username, sid, stored["messages"],
+        slice_rounds=slice_rounds, full=bool(data.get("full")),
     )
     if not result["ok"]:
         return jsonify({"error": result.get("error", "总结失败")}), 502
@@ -738,7 +740,8 @@ def api_context_config(sid):
 
 @app.route("/api/sessions/<sid>/facts-refresh", methods=["POST"])
 def api_refresh_facts(sid):
-    """手动触发一次动态关键事实抽取。body: {"api_key": "..."}。"""
+    """手动触发一次动态关键事实抽取。body: {"api_key": "...", "full": bool}。
+    full=True（重新总结）：用全部历史重新抽取并合并覆盖；否则只增量处理最近片段。"""
     username = session["username"]
     data = request.get_json(force=True, silent=True) or {}
     api_key = str(data.get("api_key") or "").strip()
@@ -748,7 +751,7 @@ def api_refresh_facts(sid):
     if not stored:
         return jsonify({"error": "会话不存在"}), 404
     new_facts = memory_engine.extract_facts_for_session(
-        api_key, username, sid, stored["messages"]
+        api_key, username, sid, stored["messages"], full=bool(data.get("full"))
     )
     if new_facts is None:
         return jsonify({"error": "抽取失败或没有新增事实"}), 502

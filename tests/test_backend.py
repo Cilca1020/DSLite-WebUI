@@ -461,6 +461,71 @@ class TestMemoryEngine(unittest.TestCase):
         s = storage.get_session_memory(self.username, self.sid)["summary"]
         self.assertEqual(s["last_round"], 6)
 
+    def test_run_summary_full_regenerates(self):
+        """full=True（重新总结）：忽略旧摘要与总结点，从全部历史重新生成并覆盖。"""
+        storage.set_session_summary(self.username, self.sid, "旧摘要", last_round=2)
+        chat = self._msgs(6)
+        # 断言 LLM 输入里不出现旧摘要（未走合并分支，而是重新切片总结）
+        def fake_chat(api_key, model, messages, **kwargs):
+            text = " ".join(m.get("content", "") for m in messages)
+            self.assertNotIn("旧摘要", text)
+            return "全新摘要"
+        with mock.patch("llm_client.chat", side_effect=fake_chat):
+            r = memory_engine.run_summary("fake-key", self.username, self.sid, chat, full=True)
+        self.assertTrue(r["ok"])
+        self.assertEqual(r["summary"], "全新摘要")
+        s = storage.get_session_memory(self.username, self.sid)["summary"]
+        self.assertEqual(s["text"], "全新摘要")  # 覆盖旧摘要
+        self.assertEqual(s["last_round"], 6)
+
+    def test_extract_facts_for_session_full_uses_all_history(self):
+        """full=True：用全部历史重新抽取（而非只取最近片段）。"""
+        for i in range(30):
+            storage.append_message(self.username, self.sid, "user", f"q{i}")
+            storage.append_message(self.username, self.sid, "assistant", f"a{i}")
+        captured = {}
+        def fake_chat(api_key, model, messages, **kwargs):
+            captured["text"] = messages[-1]["content"]
+            return "- 主角叫小明"
+        with mock.patch("llm_client.chat", side_effect=fake_chat):
+            new = memory_engine.extract_facts_for_session(
+                "fake-key", self.username, self.sid, None, full=True
+            )
+        self.assertIsNotNone(new)
+        self.assertIn("q0", captured["text"])   # 包含最早消息
+        self.assertIn("q29", captured["text"])  # 也包含最新消息
+        # 走纯抽取提示词（不携带旧事实，不是合并提示词）
+        self.assertNotIn("已有事实", captured["text"])
+
+    def test_extract_facts_for_session_full_replaces(self):
+        """full=True（重新总结）：结果整体替换旧事实，而不是合并追加。"""
+        storage.set_session_facts(self.username, self.sid, [{"text": "过时的旧事实"}])
+        for i in range(4):
+            storage.append_message(self.username, self.sid, "user", f"q{i}")
+            storage.append_message(self.username, self.sid, "assistant", f"a{i}")
+        with mock.patch("llm_client.chat", return_value="- 主角叫小明\n- 小美是女主角"):
+            new = memory_engine.extract_facts_for_session(
+                "fake-key", self.username, self.sid, None, full=True
+            )
+        texts = [f["text"] for f in new]
+        self.assertEqual(texts, ["主角叫小明", "小美是女主角"])  # 旧事实被替换掉
+        mem = storage.get_session_memory(self.username, self.sid)
+        self.assertEqual([f["text"] for f in mem["facts"]], ["主角叫小明", "小美是女主角"])
+
+    def test_extract_facts_for_session_incremental_merges(self):
+        """full=False（默认）：增量抽取与旧事实合并，旧事实保留。"""
+        storage.set_session_facts(self.username, self.sid, [{"text": "旧事实保留"}])
+        for i in range(4):
+            storage.append_message(self.username, self.sid, "user", f"q{i}")
+            storage.append_message(self.username, self.sid, "assistant", f"a{i}")
+        with mock.patch("llm_client.chat", return_value="- 新事实A"):
+            new = memory_engine.extract_facts_for_session(
+                "fake-key", self.username, self.sid, None
+            )
+        texts = [f["text"] for f in new]
+        self.assertIn("旧事实保留", texts)  # 增量合并，旧事实保留
+        self.assertIn("新事实A", texts)
+
     def test_run_summary_idempotent(self):
         """无新内容时返回旧摘要，不重复调用 LLM。"""
         chat = self._msgs(6)
@@ -808,6 +873,28 @@ class TestAPI(unittest.TestCase):
         r = self.client.post(f"/api/sessions/{sid}/summary", json={"api_key": "fake-key"})
         self.assertEqual(r.status_code, 400)
         self.assertIn("关闭", r.get_json()["error"])
+
+    def test_summary_api_full_flag(self):
+        """重新总结：/summary 传 full=true 时从全部历史重新生成并覆盖旧摘要。"""
+        sid = self._new_session()
+        for i in range(4):
+            self.client.post(f"/api/sessions/{sid}/msg",
+                             json={"role": "user", "content": f"提问{i}"})
+            self.client.post(f"/api/sessions/{sid}/msg",
+                             json={"role": "assistant", "content": f"回答{i}"})
+        # 先增量生成一份旧摘要
+        with mock.patch("llm_client.chat", return_value="旧摘要"):
+            r = self.client.post(f"/api/sessions/{sid}/summary", json={"api_key": "fake-key"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json()["summary"], "旧摘要")
+        # full=true 重新生成（覆盖旧摘要）
+        with mock.patch("llm_client.chat", return_value="全新摘要"):
+            r = self.client.post(f"/api/sessions/{sid}/summary",
+                                 json={"api_key": "fake-key", "full": True})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json()["summary"], "全新摘要")
+        mem = storage.get_session_memory(self.username, sid)
+        self.assertEqual(mem["summary"]["text"], "全新摘要")
 
     def test_refresh_api_mock_llm(self):
         sid = self._new_session()

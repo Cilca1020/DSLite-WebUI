@@ -439,11 +439,14 @@ def merge_summary(api_key, old_summary, new_slices_text):
         return old
 
 
-def run_summary(api_key, username, sid, stored_msgs, slice_rounds=None):
-    """执行一次剧情总结：把「上次总结点之后」的对话切片，分段总结再合并进旧摘要。
+def run_summary(api_key, username, sid, stored_msgs, slice_rounds=None, full=False):
+    """执行一次剧情总结：把对话切片，分段总结再合并成剧情摘要。
 
-    增量策略：从上次总结到的轮次 last_round 之后开始切片，避免重复总结旧内容；
-    再把新切片摘要与旧摘要合并成一份更新的剧情摘要。
+    增量策略（full=False，默认）：从上次总结到的轮次 last_round 之后开始切片，
+    避免重复总结旧内容，再把新切片摘要与旧摘要合并成一份更新的剧情摘要。
+
+    full=True（重新总结）：忽略上次总结点与旧摘要，把全部历史从头切片总结，
+    生成一份全新的完整摘要并覆盖旧文本（用于 LLM 结果不佳时强制重算）。
 
     返回 {"ok": bool, "summary": str, "error": str}。
     slice_rounds: 切片宽度（每次调用喂给模型的轮数）；None 用配置默认。
@@ -463,9 +466,9 @@ def run_summary(api_key, username, sid, stored_msgs, slice_rounds=None):
     ]
     if not chat:
         return {"ok": False, "error": "没有可总结的对话"}
-    old_summary = (memory.get("summary") or {}).get("text", "")
-    last_round = int((memory.get("summary") or {}).get("last_round") or 0)
-    # 从上次总结点之后的消息开始（增量）
+    old_summary = "" if full else (memory.get("summary") or {}).get("text", "")
+    last_round = 0 if full else int((memory.get("summary") or {}).get("last_round") or 0)
+    # 从上次总结点之后的消息开始（增量）；full 时从第 0 轮开始（全量重跑）
     start_idx = _index_of_round(chat, last_round)
     new_chat = chat[start_idx:]
     if not new_chat:
@@ -579,8 +582,12 @@ def should_auto_summary(username, sid, stored_msgs=None):
     return (total_rounds - last_round) >= auto_rounds
 
 
-def extract_facts_for_session(api_key, username, sid, stored_msgs):
-    """对会话做一次增量关键事实抽取：合并旧事实 + 最近对话片段，落库并返回新事实列表。
+def extract_facts_for_session(api_key, username, sid, stored_msgs, full=False):
+    """对会话做一次关键事实抽取，落库并返回新事实列表。
+
+    full=False（默认，增量）：只喂最近若干条对话，结果与旧事实合并去重。
+    full=True（重新总结）：不带旧事实，用纯抽取提示词对全部历史重新生成，
+    生成的新列表【整体替换】旧列表（旧事实不会保留，除非历史中重新抽出了它）。
 
     失败返回 None（优雅降级，不阻塞主对话）。由调用方决定触发频率。
     """
@@ -602,7 +609,16 @@ def extract_facts_for_session(api_key, username, sid, stored_msgs):
     if not chat:
         return None
     facts = memory.get("facts") or []
-    # 喂给 LLM 的片段：最近若干条（覆盖自上次抽取以来的新内容）
+    if full:
+        # 重新总结：空旧事实走纯抽取提示词，结果整体替换（不合并、不保留旧列表）
+        new_facts = extract_facts(api_key, [], chat)
+        if not new_facts:
+            return None
+        if [f.get("text") for f in new_facts] != [f.get("text") for f in facts]:
+            storage.set_session_facts(username, sid, new_facts)
+            return new_facts
+        return None
+    # 增量：只取最近若干条（覆盖自上次抽取以来的新内容），与旧事实合并去重
     recent = chat[- max(config.FACT_EXTRACT_EVERY * 2, 6):]
     new_facts = extract_facts(api_key, facts, recent)
     if not new_facts:

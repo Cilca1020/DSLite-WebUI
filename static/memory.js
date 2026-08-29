@@ -16,11 +16,13 @@ let MEMORY_STATE = null;
 // 读取记忆面板上的元素（可能尚未渲染，统一用安全取值）
 const memEl = (id) => document.getElementById(id);
 
-// 把「记忆」页各卡片恢复为未选中会话的占位态
+// 把「记忆」页各卡片恢复为未选中会话的占位态（顶部批量按钮一并隐藏）
 function resetMemoryPanel() {
   MEMORY_STATE = null;
   const empty = memEl("memoryEmptyHint");
   if (empty) empty.classList.remove("hidden");
+  const bar = memEl("memoryMasterBar");
+  if (bar) bar.classList.add("hidden");
   ["memorySystemGroup", "memoryCardGroup", "memoryFactsGroup", "memorySummaryGroup", "memoryVectorGroup"].forEach((id) => {
     const el = memEl(id);
     if (el) el.classList.add("hidden");
@@ -38,6 +40,8 @@ async function loadMemoryPanel() {
     return;
   }
   if (empty) empty.classList.add("hidden");
+  const bar = memEl("memoryMasterBar");
+  if (bar) bar.classList.remove("hidden");
   groups.forEach((el) => el && el.classList.remove("hidden"));
 
   try {
@@ -73,7 +77,7 @@ function renderMemoryPanel() {
     if (!facts.length) {
       const p = document.createElement("p");
       p.className = "memory-empty-text";
-      p.textContent = "暂无事实。对话中会自动抽取，也可点击「手动抽取事实」。";
+      p.textContent = "暂无事实。对话中会自动抽取，也可点击「重新总结」。";
       factsList.appendChild(p);
     } else {
       facts.forEach((f, i) => {
@@ -253,7 +257,7 @@ function bindMemoryCardLib() {
   };
 }
 
-// ② 动态关键事实：手动抽取
+// ② 动态关键事实：手动重新总结（从全部历史重新抽取并合并覆盖）
 function bindMemoryFacts() {
   const btn = memEl("memoryFactsRefreshBtn");
   if (!btn) return;
@@ -262,17 +266,17 @@ function bindMemoryFacts() {
     const apiKey = loadApiKey();
     if (!apiKey) return showToast("请先在「参数」页填写 API Key");
     btn.disabled = true;
-    btn.textContent = "抽取中…";
+    btn.textContent = "总结中…";
     try {
-      const r = await apiPost("/api/sessions/" + currentSessionId + "/facts-refresh", { api_key: apiKey });
+      const r = await apiPost("/api/sessions/" + currentSessionId + "/facts-refresh", { api_key: apiKey, full: true });
       if (r && r.error) return showToast(r.error || "没有新增事实");
       showToast("事实已更新");
       await loadMemoryPanel();
     } catch (_) {
-      showToast("抽取失败");
+      showToast("总结失败");
     } finally {
       btn.disabled = false;
-      btn.textContent = "手动抽取事实";
+      btn.textContent = "重新总结";
     }
   };
 }
@@ -304,7 +308,7 @@ function bindMemoryContext() {
   if (saveBtn) saveBtn.addEventListener("click", saveCurrent);
 }
 
-// ③ 剧情摘要：保存配置 + 立即总结
+// ③ 剧情摘要：保存配置 + 重新总结
 function bindMemorySummary() {
   const saveBtn = memEl("memorySummarySaveConfigBtn");
   if (saveBtn) {
@@ -339,15 +343,15 @@ function bindMemorySummary() {
       runBtn.disabled = true;
       runBtn.textContent = "总结中…";
       try {
-        const r = await apiPost("/api/sessions/" + currentSessionId + "/summary", { api_key: apiKey });
+        const r = await apiPost("/api/sessions/" + currentSessionId + "/summary", { api_key: apiKey, full: true });
         if (r && r.error) return showToast(r.error || "总结失败");
-        showToast("摘要已更新");
+        showToast("摘要已重新生成");
         await loadMemoryPanel();
       } catch (_) {
         showToast("总结失败");
       } finally {
         runBtn.disabled = false;
-        runBtn.textContent = "立即总结";
+        runBtn.textContent = "重新总结";
       }
     };
   }
