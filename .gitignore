@@ -5,6 +5,7 @@ data/
 .env
 *.log
 .vscode/
+.playwright-cli/
 AGENT.md
 
 # 模型文件不入库，保留 .gitkeep 占位

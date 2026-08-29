@@ -185,7 +185,8 @@ class VectorMemory:
         db_dir = os.path.dirname(self.db_path)
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
-        conn = sqlite3.connect(self.db_path)
+        # timeout 缓解并发写（记忆维护后台线程与请求 reconcile 同时写）的锁冲突
+        conn = sqlite3.connect(self.db_path, timeout=10)
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -410,11 +411,16 @@ class VectorMemory:
     def search(self, query_text, session_id=None, top_k=None, exclude_contents=()):
         """本地余弦相似度检索，返回按分数降序的命中列表。
 
+        top_k 语义：
+          - None：用实例默认 self.top_k
+          - 0：不限制数量，全部按相似度阈值召回（自动召回）
+          - >0：最多返回 N 条
         exclude_contents: 需要排除的内容集合（如最近窗口内的消息，避免重复）。
         """
         if not (query_text or "").strip():
             return []
-        top_k = top_k or self.top_k
+        if top_k is None:
+            top_k = self.top_k
         qvec = self.encode([query_text], query=True)[0]
         exclude = set(exclude_contents or ())
         sql = (
@@ -455,7 +461,8 @@ class VectorMemory:
                 continue
             seen.add(r["content"])
             dedup.append(r)
-        return dedup[:top_k]
+        # top_k=0 表示不限制数量（自动召回）；>0 时返回前 N 条
+        return dedup if top_k == 0 else dedup[:top_k]
 
     # ------------------------- 历史拼接 -------------------------
 
@@ -509,7 +516,9 @@ class VectorMemory:
                 # 最近 nr 轮 = 从倒数第 nr 条 user 消息开始的所有消息
                 start = user_idx[rounds_total - nr] if nr < rounds_total else 0
                 recent_n = len(chat) - start
-        top_k = top_k or self.top_k
+        # top_k: None -> 用默认 self.top_k；0 -> 不限制（自动召回）；>0 -> 固定 N 条
+        if top_k is None:
+            top_k = self.top_k
         min_score = self.min_score if min_score is None else min_score
 
         recent = chat[-recent_n:]
@@ -530,7 +539,10 @@ class VectorMemory:
         else:
             base = chat
         memory = self._expand_rounds(base, hits, recent_contents)
-        result = memory + recent
+        # 给两部分打上来源标记（仅用于日志/调试，_src 是额外字段，不影响发给 LLM）
+        vector_msgs = [{**m, "_src": "vector"} for m in memory]
+        recent_msgs = [{**m, "_src": "recent"} for m in recent]
+        result = vector_msgs + recent_msgs
         # token 过多时砍掉最早的部分（至少保留最后一条，即当前提问）
         if max_chars and max_chars > 0:
             while len(result) > 1 and sum(len(m["content"]) for m in result) > max_chars:

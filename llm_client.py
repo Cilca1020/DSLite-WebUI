@@ -4,13 +4,55 @@
 - 所有厂商走同一套 /chat/completions 接口，仅 base_url 与 model 不同。
 - 支持流式（stream=True）与非流式两种返回，前端用流式做打字机效果。
 - 不持久化 API Key，Key 由调用方（路由层）传入。
+- 网络层自动重试：应对 DNS 抖动、连接超时、瞬时 5xx / 限流（见 config.REQUEST_*）。
 """
 
 import json
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
-from config import REQUEST_TIMEOUT
+from config import (
+    REQUEST_MAX_RETRIES,
+    REQUEST_RETRY_BACKOFF,
+    REQUEST_RETRY_STATUS,
+    REQUEST_TIMEOUT,
+)
+
+
+def _make_session():
+    """构建带网络层重试的 requests.Session。
+
+    - 对连接错误 / 连接超时 / DNS 解析失败 / 读取超时总是重试（Retry 默认覆盖这些）。
+    - 对状态码 429、500、502、503、504 也重试（服务器瞬时错误 / 限流）。
+    - 指数退避：backoff_factor 1.0 -> 1s, 2s, 4s。
+    """
+    retry = Retry(
+        total=REQUEST_MAX_RETRIES,
+        connect=REQUEST_MAX_RETRIES,
+        read=REQUEST_MAX_RETRIES,
+        status=REQUEST_MAX_RETRIES,
+        backoff_factor=REQUEST_RETRY_BACKOFF,
+        status_forcelist=list(REQUEST_RETRY_STATUS),
+        allowed_methods=["POST"],
+        raise_on_status=False,  # 不自动抛 HTTPError，交由调用方处理状态码
+    )
+    session = requests.Session()
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+_session = None
+
+
+def _get_session():
+    global _session
+    if _session is None:
+        _session = _make_session()
+    return _session
 
 
 def _find_model(model_id):
@@ -68,9 +110,10 @@ def chat(
     if stop:
         payload["stop"] = stop
 
+    session = _get_session()
     if not stream:
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT)
+            resp = session.post(url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT)
         except requests.RequestException as e:
             raise RuntimeError(f"网络错误: {e}") from e
         if resp.status_code != 200:
@@ -78,17 +121,20 @@ def chat(
         data = resp.json()
         return data["choices"][0]["message"]["content"]
 
-    return _stream_response(url, headers, payload)
+    return _stream_response(session, url, headers, payload)
 
 
-def _stream_response(url, headers, payload):
-    """流式读取 SSE 响应，避免影响非流式调用的返回类型。"""
-    # 流式：用流式读取，逐行解析 SSE
+def _stream_response(session, url, headers, payload):
+    """流式读取 SSE 响应，避免影响非流式调用的返回类型。
+
+    用带重试的 session 发起流式请求；网络错误会在重试耗尽后抛 RuntimeError。
+    """
     try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT, stream=True)
+        resp = session.post(url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT, stream=True)
     except requests.RequestException as e:
         raise RuntimeError(f"网络错误: {e}") from e
     if resp.status_code != 200:
+        # 非流式返回时直接读取错误正文，便于报错信息完整
         raise RuntimeError(f"API 错误 {resp.status_code}: {resp.text}")
 
     try:

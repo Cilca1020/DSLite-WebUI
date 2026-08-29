@@ -141,6 +141,14 @@
       </button>
     </div>
 
+    <!-- 分页导航：参数 / 记忆 -->
+    <nav class="settings-tabs" role="tablist">
+      <button id="settingsTabParams" class="settings-tab active" type="button" role="tab" aria-selected="true">参数</button>
+      <button id="settingsTabMemory" class="settings-tab" type="button" role="tab" aria-selected="false">记忆</button>
+    </nav>
+
+    <!-- 参数页：API Key / 界面 / 推理参数（向量记忆与系统提示词已移至记忆页） -->
+    <div class="settings-page" id="settingsPageParams">
     <div class="settings-body">
       <section class="settings-group">
         <h3>API Key</h3>
@@ -155,11 +163,6 @@
           </a>
           <button id="clearKeyBtn" class="mini-btn">清除本地保存的 Key</button>
         </div>
-      </section>
-
-      <section class="settings-group">
-        <h3>System Prompt</h3>
-        <textarea id="system_prompt" rows="4"></textarea>
       </section>
 
       <section class="settings-group">
@@ -181,28 +184,6 @@
             <span class="switch-track"><span class="switch-thumb"></span></span>
           </label>
           <span class="param-hint">生成新回答时，思考过程随正文输出自动折叠收起；关闭后始终保持展开。</span>
-        </div>
-      </section>
-
-      <section class="settings-group">
-        <h3>向量记忆</h3>
-        <div class="param-field">
-          <label>向量化模型</label>
-          <div id="vmModelBox" class="vm-model-box"></div>
-          <span class="param-hint">长对话检索用的本地模型（后端 models 目录）；设置随当前对话单独保存，新建对话默认关闭。</span>
-        </div>
-        <div class="param-field vm-collapsible" id="vmToggleField">
-          <label for="vmEnabled">启用向量记忆</label>
-          <label class="switch-row" for="vmEnabled">
-            <input id="vmEnabled" type="checkbox" />
-            <span class="switch-track"><span class="switch-thumb"></span></span>
-          </label>
-          <span class="param-hint">关闭后不启用向量记忆，N 不生效，对话历史按模型上下文窗口截断，早期内容可能丢失。（对话中首次打开时，加载可能稍慢）</span>
-        </div>
-        <div class="param-field vm-collapsible" id="vmNField">
-          <label for="vmRecentN">最近 N 轮对话</label>
-          <input id="vmRecentN" type="number" min="1" max="1000" step="1" />
-          <span class="param-hint">保留最近 N 轮对话（一轮 = 一次提问 + 一次回答，上限 1000）；轮次 ≤ N 时全部保留，token 过多时自动截掉最早的对话。</span>
         </div>
       </section>
 
@@ -240,6 +221,96 @@
         </div>
       </section>
     </div>
+    </div><!-- /settingsPageParams -->
+
+    <!-- 记忆页：按记忆层级顺序放置卡片 ⓪系统提示词 ①人物卡 ②动态关键事实 ③剧情摘要 ④向量记忆 -->
+    <div class="settings-page hidden" id="settingsPageMemory">
+      <div class="settings-body">
+        <!-- 未选中会话时的占位提示 -->
+        <div id="memoryEmptyHint" class="settings-group memory-empty hidden">
+          <p>尚未选择对话。打开一个会话/发送一条消息后，这里可查看与编辑该会话的五层记忆。</p>
+        </div>
+
+        <!-- ⓪ 系统提示词（第 0 层，作为 system 消息最先注入） -->
+        <section class="settings-group" id="memorySystemGroup">
+          <h3>⓪ 系统提示词 <span class="memory-layer-tag">无条件注入</span></h3>
+          <textarea id="system_prompt" rows="4" placeholder="设定模型的基础行为、语气、规则与世界观…"></textarea>
+          <span class="param-hint">作为系统消息随每次请求最先注入（位于人物卡之前），按会话单独保存。</span>
+        </section>
+
+        <!-- ① 人物卡（核心设定卡） -->
+        <section class="settings-group" id="memoryCardGroup">
+          <h3>① 人物卡 <span class="memory-layer-tag">无条件注入</span></h3>
+          <textarea id="memoryCardInput" rows="6" placeholder="写下角色的核心设定（性格、身份、背景、说话风格…）"></textarea>
+          <div class="memory-actions">
+            <button id="memoryCardSaveBtn" class="mini-btn" type="button">保存设定</button>
+            <label class="memory-cardlib">
+              <select id="memoryCardLibSelect"></select>
+              <button id="memoryCardLibApplyBtn" class="mini-btn" type="button">应用卡库</button>
+            </label>
+          </div>
+          <span class="param-hint">人物卡作为系统提示的固定部分，随每次请求无条件注入；可从卡库选择已有角色卡一键应用。</span>
+        </section>
+
+        <!-- ② 动态关键事实 -->
+        <section class="settings-group" id="memoryFactsGroup">
+          <h3>② 动态关键事实 <span class="memory-layer-tag">无条件注入</span></h3>
+          <div id="memoryFactsList" class="memory-facts-list"></div>
+          <div class="memory-actions">
+            <button id="memoryFactsRefreshBtn" class="mini-btn" type="button">手动抽取事实</button>
+          </div>
+          <span class="param-hint">对话中按间隔自动抽取重要设定并去重合并；也可随时手动触发（需已填写 API Key）。</span>
+        </section>
+
+        <!-- ③ 剧情摘要 -->
+        <section class="settings-group" id="memorySummaryGroup">
+          <h3>③ 剧情摘要 <span class="memory-layer-tag">无条件注入</span></h3>
+          <textarea id="memorySummaryText" class="memory-summary-text" rows="5" readonly placeholder="暂无摘要。可点击「立即总结」或等待自动总结。"></textarea>
+          <div class="memory-summary-meta" id="memorySummaryMeta"></div>
+          <div class="memory-actions">
+            <label class="memory-num-field">
+              <span>切片轮数</span>
+              <input id="memorySummarySlice" type="number" min="1" max="200" step="1" />
+            </label>
+            <label class="memory-num-field">
+              <span>自动间隔（轮）</span>
+              <input id="memorySummaryAuto" type="number" min="0" max="1000" step="1" />
+            </label>
+            <button id="memorySummarySaveConfigBtn" class="mini-btn" type="button">保存配置</button>
+            <button id="memorySummaryRunBtn" class="mini-btn" type="button">立即总结</button>
+          </div>
+          <span class="param-hint">摘要按切片轮数分段总结剧情进展，随每次请求注入；自动间隔 = 每 N 轮触发一次自动总结，0 = 关闭自动总结（仅手动）。</span>
+        </section>
+
+        <!-- ④ 向量记忆 -->
+        <section class="settings-group" id="memoryVectorGroup">
+          <h3>④ 向量记忆 <span class="memory-layer-tag">按需召回</span></h3>
+          <div class="param-field">
+            <label>向量化模型</label>
+            <div id="vmModelBox" class="vm-model-box"></div>
+            <span class="param-hint">长对话检索用的本地模型（后端 models 目录）；设置随当前对话单独保存，新建对话默认关闭。</span>
+          </div>
+          <div class="param-field vm-collapsible" id="vmToggleField">
+            <label for="vmEnabled">启用向量记忆</label>
+            <label class="switch-row" for="vmEnabled">
+              <input id="vmEnabled" type="checkbox" />
+              <span class="switch-track"><span class="switch-thumb"></span></span>
+            </label>
+            <span class="param-hint">关闭后不启用向量记忆，N 不生效，对话历史按模型上下文窗口截断，早期内容可能丢失。（对话中首次打开时，加载可能稍慢）</span>
+          </div>
+          <div class="param-field vm-collapsible" id="vmNField">
+            <label for="vmRecentN">最近 N 轮对话</label>
+            <input id="vmRecentN" type="number" min="1" max="1000" step="1" />
+            <span class="param-hint">保留最近 N 轮对话（一轮 = 一次提问 + 一次回答，上限 1000）；轮次 ≤ N 时全部保留，token 过多时自动截掉最早的对话。</span>
+          </div>
+          <div class="param-field vm-collapsible" id="vmTopKField">
+            <label for="vmTopK">召回数量 Top K</label>
+            <input id="vmTopK" type="number" min="0" max="500" step="1" />
+            <span class="param-hint">0 = 自动召回（按相似度阈值不限数量）；&gt;0 = 固定返回前 N 条相似记忆（上限 500）。</span>
+          </div>
+        </section>
+      </div>
+    </div><!-- /settingsPageMemory -->
   </aside>
 
   <!-- 前端脚本统一动态加载（带失败自动重试，缓解网络不稳导致加载失败）。
@@ -260,6 +331,7 @@
         "/static/sessions.js",
         "/static/export.js",
         "/static/chat.js",
+        "/static/memory.js",
         "/static/auth.js",
         "/static/main.js"
       ];

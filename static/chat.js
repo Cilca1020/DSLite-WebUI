@@ -15,6 +15,8 @@ const VM_MODEL_KEY = "dsw_vm_model"; // 浏览器缓存键
 // 当前会话的向量记忆设置（openSession / resetChatUI 时从会话加载/重置）
 let vmEnabled = false;
 let vmRecentN = VM_DEFAULT_N;
+// top_k 召回数量：null=未设置（后端用默认）；0=自动召回（不限制数量）；>0=固定 N 条
+let vmTopK = null;
 
 function vmLoadModel() { return localStorage.getItem(VM_MODEL_KEY) || ""; }
 function vmSaveModel(model) {
@@ -25,6 +27,11 @@ function vmLoadEnabled() { return vmEnabled; }
 function vmLoadN() {
   const v = parseInt(vmRecentN, 10);
   return isNaN(v) ? VM_DEFAULT_N : Math.max(1, Math.min(VM_N_MAX, v));
+}
+function vmLoadTopK() { return vmTopK; }
+function vmSaveTopK(v) {
+  if (v === null || v === undefined) vmTopK = null;
+  else vmTopK = Math.max(0, Math.min(500, parseInt(v, 10) || 0));
 }
 
 // 本次请求是否启用向量记忆：严格由「启用向量记忆」开关控制；需已选向量化模型。
@@ -40,6 +47,7 @@ function vmUse() {
 function applyVmToUI(vm) {
   vmEnabled = !!(vm && vm.enabled);
   vmRecentN = (vm && vm.recent_n) || VM_DEFAULT_N;
+  vmTopK = (vm && vm.top_k !== undefined && vm.top_k !== null) ? vm.top_k : null;
   // vm 存在（含 model 为空的会话）即覆盖缓存；null（新会话）则保留全局缓存沿用上次选择
   if (vm && typeof vm.model === "string") vmSaveModel(vm.model);
   if (window.renderVmModelBox) window.renderVmModelBox();
@@ -51,6 +59,13 @@ function applyVmToUI(vm) {
     n.max = VM_N_MAX;
     n.disabled = !vmEnabled; // 开关关闭时禁用 N 输入框
   }
+  const topK = $("#vmTopK");
+  if (topK) {
+    topK.value = (vmTopK === null) ? "" : vmTopK;
+    topK.disabled = !vmEnabled;
+  }
+  // 通知记忆页同步 top_k 的可见/禁用态
+  if (window.syncMemoryVectorField) window.syncMemoryVectorField();
 }
 window.applyVmToUI = applyVmToUI;
 

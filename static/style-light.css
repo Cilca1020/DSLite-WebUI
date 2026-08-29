@@ -638,6 +638,146 @@ body {
   transform: scale(1.05); /* 高亮仅轻微放大，避免顶到上方文字 */
 }
 
+/* 设置面板分页：参数 / 记忆 */
+.settings-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 16px 0;
+  border-bottom: 1px solid var(--border);
+  background: inherit;
+}
+.settings-tab {
+  flex: 1;
+  padding: 8px 0 10px;
+  border: none;
+  background: none;
+  color: var(--text-sidebar-dim);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 0.18s, border-color 0.18s;
+}
+.settings-tab:hover { color: var(--text-main); }
+.settings-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+/* 分页容器：撑满面板剩余高度，让内部 .settings-body 滚动 */
+.settings-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.settings-page .settings-body { flex: 1; min-height: 0; }
+
+/* 记忆页：层级卡片 */
+.memory-layer-tag {
+  float: right;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: 10px;
+  padding: 2px 8px;
+  margin-top: -2px;
+}
+.memory-empty p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-sidebar-dim);
+  line-height: 1.6;
+}
+.memory-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 8px;
+}
+.memory-actions .mini-btn { height: 30px; line-height: 1; white-space: nowrap; }
+.memory-cardlib {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto; /* 应用卡库右对齐，与保存按钮分开 */
+}
+.memory-cardlib select {
+  max-width: 150px;
+  padding: 6px 8px;
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: inherit;
+  background: var(--field-bg);
+  color: var(--field-text);
+}
+.memory-facts-list {
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px;
+}
+.memory-fact-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--input-border);
+  background: color-mix(in srgb, var(--field-bg) 94%, var(--accent));
+}
+.memory-fact-index {
+  flex: none;
+  font-size: 11px;
+  color: var(--accent);
+  font-family: ui-monospace, Consolas, monospace;
+}
+.memory-fact-text {
+  font-size: 13px;
+  color: var(--field-text);
+  line-height: 1.5;
+  word-break: break-word;
+}
+.memory-empty-text {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-sidebar-dim);
+  line-height: 1.6;
+  padding: 4px 2px;
+}
+.memory-summary-text {
+  width: 100%;
+  background: var(--field-bg) !important;
+}
+.memory-summary-meta {
+  font-size: 11px;
+  color: var(--text-sidebar-dim);
+  margin: 6px 0 10px;
+}
+.memory-num-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--label-color);
+  margin: 0 !important;
+}
+.memory-num-field input {
+  width: 64px;
+  padding: 6px 8px;
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: inherit;
+  background: var(--field-bg);
+  color: var(--field-text);
+}
+
 /* 对话区：chat-wrap 承接 .main 的弹性布局，chat-box 在其内部滚动 */
 .chat-wrap {
   position: relative; /* 置底按钮以此为定位基准 */

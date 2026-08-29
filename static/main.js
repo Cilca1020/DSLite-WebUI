@@ -146,11 +146,16 @@ async function init() {
     const hasModel = !!vmLoadModel();
     const tf = $("#vmToggleField");
     const nf = $("#vmNField");
+    const kf = $("#vmTopKField");
     if (tf) tf.classList.toggle("vm-hidden", !hasModel);
     if (nf) nf.classList.toggle("vm-hidden", !hasModel);
+    if (kf) kf.classList.toggle("vm-hidden", !hasModel);
     $("#vmEnabled").disabled = !hasModel;
-    // N 仅在「已选模型且启用向量记忆」时可编辑；关闭开关或未选模型时禁用
-    $("#vmRecentN").disabled = !hasModel || !$("#vmEnabled").checked;
+    // N 与 top_k 仅在「已选模型且启用向量记忆」时可编辑；关闭开关或未选模型时禁用
+    const enabled = $("#vmEnabled").checked;
+    $("#vmRecentN").disabled = !hasModel || !enabled;
+    const topK = $("#vmTopK");
+    if (topK) topK.disabled = !hasModel || !enabled;
     if (!hasModel) $("#vmEnabled").checked = false;
   };
 
@@ -183,6 +188,8 @@ async function init() {
     $("#settingsOverlay").classList.remove("hidden");
     $("#settingsPanel").setAttribute("aria-hidden", "false");
     refreshVmModels(); // 打开设置时刷新模型列表（可能新增了模型）
+    // 记忆页：打开面板时预加载当前会话的四层记忆（无会话时显示占位）
+    if (window.loadMemoryPanel) window.loadMemoryPanel();
   };
   const closeSettings = () => {
     writeParamsToUI(readParamsFromUI()); // 关闭前先把越界值回退
@@ -195,6 +202,26 @@ async function init() {
   $("#openSettingsBtn").onclick = openSettings;
   $("#closeSettingsBtn").onclick = closeSettings;
   $("#settingsOverlay").onclick = closeSettings;
+
+  // 设置面板分页切换：参数 / 记忆
+  const switchSettingsTab = (name) => {
+    const toParams = name === "params";
+    const tabParams = $("#settingsTabParams");
+    const tabMemory = $("#settingsTabMemory");
+    const pageParams = $("#settingsPageParams");
+    const pageMemory = $("#settingsPageMemory");
+    tabParams.classList.toggle("active", toParams);
+    tabMemory.classList.toggle("active", !toParams);
+    tabParams.setAttribute("aria-selected", toParams ? "true" : "false");
+    tabMemory.setAttribute("aria-selected", toParams ? "false" : "true");
+    pageParams.classList.toggle("hidden", !toParams);
+    pageMemory.classList.toggle("hidden", toParams);
+    // 进入记忆页时若数据未加载（例如直接切页），重新加载
+    if (!toParams && window.loadMemoryPanel) window.loadMemoryPanel();
+  };
+  $("#settingsTabParams").onclick = () => switchSettingsTab("params");
+  $("#settingsTabMemory").onclick = () => switchSettingsTab("memory");
+  window.switchSettingsTab = switchSettingsTab; // 供其他模块按需切换
 
   // 主题色预设（浅/深各一套；选用常见、不猎奇的色系）
   const THEME_COLORS = {

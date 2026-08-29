@@ -76,6 +76,12 @@ STOP_MAX_LEN = 32
 # 请求模型 API 的超时时间（秒）
 REQUEST_TIMEOUT = 60
 
+# 模型 API 请求的网络层重试策略（应对 DNS 抖动、连接超时、瞬时 5xx / 限流）
+REQUEST_MAX_RETRIES = 3          # 最多重试次数（含首次）
+REQUEST_RETRY_BACKOFF = 1.0      # 重试指数退避基数（秒）：1s, 2s, 4s
+# 哪些状态码需要重试（网络错误 / 连接问题总是重试；这里补充服务器端错误与限流）
+REQUEST_RETRY_STATUS = (429, 500, 502, 503, 504)
+
 # ------------------------- 向量记忆（长对话） -------------------------
 # 开启后，/api/chat 发给模型的对话历史 = 最近 VECTOR_MEMORY_RECENT_N 轮对话
 # + 向量检索 VECTOR_MEMORY_TOP_K 条（本地 sentence-transformers + SQLite，无需外部 API）。

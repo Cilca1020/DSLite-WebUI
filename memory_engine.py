@@ -25,6 +25,8 @@
 import json
 import time
 
+import difflib
+
 import config
 import llm_client
 import storage
@@ -161,11 +163,22 @@ def _build_history(chat, sid, data, params, stored_msgs, memory):
             n_rounds = int(data.get("vector_memory_recent_n") or n_rounds)
         except (TypeError, ValueError):
             pass
+    # top_k：会话配置优先。None=用默认；0=不限制（自动召回）；>0=固定 N 条。
+    # 注意 vec_cfg.get("top_k") 可能为 None（未设置）或 0（不限制），需区分。
+    session_top_k = vec_cfg.get("top_k")
+    if session_top_k is None:
+        top_k = None  # 走默认
+    else:
+        try:
+            top_k = int(session_top_k)
+        except (TypeError, ValueError):
+            top_k = None
     return vm.build_history(
         chat,
         session_id=sid,
         query=query,
         recent_rounds=n_rounds,
+        top_k=top_k,
         full_messages=full,
         max_chars=config.NO_VM_MAX_CHARS,
     )
@@ -210,9 +223,12 @@ _FACT_EXTRACT_SYS = (
 
 _FACT_MERGE_SYS = (
     "你是一个角色扮演剧情的记忆助手。下面给出【已有事实】和【本轮新增片段】。"
-    "请合并它们，产出一份更新后的关键事实清单：新增的事实加入，已有事实如有变化则更新，"
-    "已被剧情推翻的事实删除，重复项合并。保持每条简洁，用「- 」开头，每行一条。"
-    "只输出事实清单本身，不要解释，不要编号。"
+    "请把它们合并成一份【去重后的】关键事实清单。要求：\n"
+    "1. 新增事实加入；已有事实如有变化用新表述覆盖旧的；已被剧情推翻的事实删除。\n"
+    "2. 【最重要】把语义相同或高度相似的事实合并成一条（只保留信息最完整、最新的一条），"
+    "绝不允许保留多条只是措辞略有差异、但实质相同的条目。\n"
+    "3. 输出格式：每条一行，以「- 」开头，简洁陈述句。只输出合并后的最终清单，"
+    "不要解释、不要编号、不要输出任何其他内容。"
 )
 
 
@@ -249,36 +265,96 @@ def extract_facts(api_key, old_facts, new_messages):
     lines = [l.strip().lstrip("-").strip() for l in str(raw or "").splitlines()]
     new_facts = [l for l in lines if l and l != "无" and l != "暂无"][: config.FACT_MAX]
     now = time.time()
+    # 逐条去重合并：先保留旧事实（未被推翻的），再追加新事实。
+    # 用「精确匹配 + 相似度阈值」双重去重，兜底 LLM 合并不彻底导致的同义重复。
     merged = []
-    seen = set()
-    # 保留顺序：旧事实在前（未被推翻的），新事实追加（去重 + 上限）
-    for f in old_facts:
-        t = str(f.get("text", "")).strip()
-        key = t.lower()
-        if t and key not in seen and t not in new_facts:
-            seen.add(key)
-            merged.append({"text": t, "ts": f.get("ts", now)})
-    for t in new_facts:
-        key = t.lower()
-        if key not in seen:
-            seen.add(key)
-            merged.append({"text": t, "ts": now})
+    for t in _dedup_facts([f.get("text", "") for f in old_facts] + new_facts):
+        if not t:
+            continue
+        # 旧事实沿用原 ts，新事实用当前时间
+        ts = next((f.get("ts", now) for f in old_facts if f.get("text", "") == t), now)
+        merged.append({"text": t, "ts": ts})
     return merged[: config.FACT_MAX]
+
+
+_FACT_SIM_THRESHOLD = 0.62  # 相似度阈值：高于则认为语义重复，合并
+
+def _dedup_facts(texts):
+    """对事实文本列表去重：精确重复 + 高相似度（difflib）重复合并为一条。
+
+    保留出现顺序中的第一条，后续与之精确相同或相似度达阈值的条目被丢弃。
+    输入可含空串，输出为去重后的非空文本列表。
+    """
+    cleaned = [str(t).strip() for t in texts]
+    result = []
+    for t in cleaned:
+        if not t:
+            continue
+        duplicate = False
+        for kept in result:
+            if t.lower() == kept.lower():
+                duplicate = True
+                break
+            # 相似度去重：较长文本中较短者覆盖率达到阈值即视为重复
+            if _fact_similar(t, kept) >= _FACT_SIM_THRESHOLD:
+                duplicate = True
+                break
+        if not duplicate:
+            result.append(t)
+    return result
+
+
+def _fact_similar(a, b):
+    """两个事实文本的相似度（0~1），衡量"短者被长者覆盖"的程度。
+
+    对「一条是另一条的精简/补充版」这类同义重复，只算 ratio() 会在长度差异大时偏低，
+    因此这里以「较短文本中被匹配的字符占比」为主：短句大部分都能在长句中匹配到，
+    就判定为高度相似（应合并）。这契合"宁合并勿漏重复"的记忆维护目标。
+    """
+    if not a or not b:
+        return 0.0
+    a, b = a.lower(), b.lower()
+    la, lb = len(a), len(b)
+    if la == 0 or lb == 0:
+        return 0.0
+    matcher = difflib.SequenceMatcher(None, a, b)
+    # ratio(): 2*匹配字符数 / (la+lb)
+    ratio = matcher.ratio()
+    # 短者被匹配的字符数 / 短者长度：衡量短句被长句覆盖的程度。
+    # 注意 get_matching_blocks() 返回 (a起始, b起始, 长度) 三元组，
+    # 匹配字符数 = sum(长度)，不能用 b 坐标相减。
+    short_len = min(la, lb)
+    matched = sum(n for _, _, n in matcher.get_matching_blocks())
+    coverage = matched / short_len if short_len else 0.0
+    # 取两者较高者：只要短句被充分覆盖或整体高度相似，都判为重复
+    return max(ratio, coverage)
 
 
 # ------------------------- 记忆维护：剧情摘要 -------------------------
 
 _SUMMARY_SLICE_SYS = (
-    "你是一个角色扮演剧情的剧情摘要助手。请把下面的对话片段压缩成一段简洁的剧情摘要，"
-    "保留：当前发生的关键事件、人物关系/状态变化、剧情的推进方向、重要的设定与专有名词。"
-    "用第三人称、陈述句，控制在 200 字以内。只输出摘要正文，不要标题、不要解释。"
+    "你是一个角色扮演剧情的剧情摘要助手。请把下面的对话片段压缩成一段简洁的剧情摘要。\n"
+    "要求：\n"
+    "1. 严格按【时间先后顺序】组织情节，从最早发生的事件写到最近发生的，"
+    "不要使用倒叙或插叙，也不要使用「此前」「之前」「后来」这类会打乱时序的连接词。\n"
+    "2. 只保留【对剧情有实质影响】的内容：关键事件、人物关系/状态变化、剧情推进方向、"
+    "重要设定与专有名词、角色的重要决定或情感转折。\n"
+    "3. 【重要】忽略低价值内容：纯粹的重复性/机械性操作（如反复测试、翻页、寒暄、"
+    "无信息量的确认性回复）、流水账式的逐条罗列。若片段只有这类内容而无实质剧情推进，"
+    "应给出最简短的概括（例如「双方进行了若干轮常规交互，无实质剧情变化」），不要逐条记录。\n"
+    "4. 用第三人称、陈述句，控制在 200 字以内。只输出摘要正文，不要标题、不要解释。"
 )
 
 _SUMMARY_MERGE_SYS = (
     "你是一个角色扮演剧情的剧情摘要助手。下面给出【旧摘要】和【新增剧情片段】，"
-    "请把它们合并成一份更新后的剧情摘要，保留剧情连续性与关键节点，"
-    "删除已被后续剧情覆盖的过时信息，控制在 500 字以内。"
-    "只输出摘要正文，不要标题、不要解释。"
+    "请把它们合并成一份更新后的剧情摘要。\n"
+    "要求：\n"
+    "1. 【最重要】按【时间先后顺序】组织全文情节：从最早发生的事件写到最近发生的，"
+    "保持一条清晰的时间线。不要倒叙、不要插叙，不要用「此前」「之前」「后来」等打乱时序的词。\n"
+    "2. 只保留【对剧情有实质影响】的内容；忽略低价值的重复性/机械性操作（反复测试、翻页、"
+    "寒暄、无信息量的确认回复等），不要逐条罗列这类流水账。\n"
+    "3. 保留剧情连续性与关键节点；删除已被后续剧情覆盖的过时信息。\n"
+    "4. 用第三人称、陈述句，控制在 500 字以内。只输出摘要正文，不要标题、不要解释。"
 )
 
 
@@ -357,9 +433,14 @@ def run_summary(api_key, username, sid, stored_msgs, slice_rounds=None):
     new_chat = chat[start_idx:]
     if not new_chat:
         return {"ok": True, "summary": old_summary}
-    # 切片宽度（轮数），上限给一个安全的经验值（如 200 轮），避免传超大整数
+    # 切片宽度（轮数）：显式参数优先 > 会话配置 slice_rounds > 全局默认。
+    # 上限给一个安全的经验值（如 200 轮），避免传超大整数。
     try:
-        slice_n = int(slice_rounds or config.SUMMARY_SLICE_ROUNDS)
+        if slice_rounds is not None:
+            slice_n = int(slice_rounds)
+        else:
+            conf = (memory.get("summary") or {}).get("slice_rounds")
+            slice_n = int(conf) if conf is not None else config.SUMMARY_SLICE_ROUNDS
     except (TypeError, ValueError):
         slice_n = config.SUMMARY_SLICE_ROUNDS
     slice_n = max(1, min(slice_n, 200))
@@ -428,14 +509,23 @@ def _count_rounds(chat):
 
 
 def should_auto_summary(username, sid, stored_msgs=None):
-    """判断是否达到自动总结阈值（距上次总结新增轮数 >= SUMMARY_AUTO_ROUNDS）。
+    """判断是否达到自动总结阈值（距上次总结新增轮数 >= auto_rounds）。
 
-    SUMMARY_AUTO_ROUNDS=0 表示关闭自动总结（仅手动）。
+    阈值优先读会话 memory.summary.auto_rounds（用户可设置），回退到
+    config.SUMMARY_AUTO_ROUNDS；auto_rounds=0 表示关闭自动总结（仅手动）。
     """
-    if config.SUMMARY_AUTO_ROUNDS <= 0:
-        return False
     memory = _get_memory(username, sid)
     if memory is None:
+        return False
+    summary = memory.get("summary") or {}
+    auto_rounds = summary.get("auto_rounds")
+    if auto_rounds is None:
+        auto_rounds = config.SUMMARY_AUTO_ROUNDS
+    try:
+        auto_rounds = int(auto_rounds)
+    except (TypeError, ValueError):
+        auto_rounds = config.SUMMARY_AUTO_ROUNDS
+    if auto_rounds <= 0:
         return False
     stored = stored_msgs if stored_msgs is not None else (
         storage.get_session(username, sid).get("messages", []) if storage.get_session(username, sid) else []
@@ -445,8 +535,8 @@ def should_auto_summary(username, sid, stored_msgs=None):
         if m.get("role") in ("user", "assistant") and (m.get("content") or "").strip()
     ]
     total_rounds = _count_rounds(chat)
-    last_round = int((memory.get("summary") or {}).get("last_round") or 0)
-    return (total_rounds - last_round) >= config.SUMMARY_AUTO_ROUNDS
+    last_round = int(summary.get("last_round") or 0)
+    return (total_rounds - last_round) >= auto_rounds
 
 
 def extract_facts_for_session(api_key, username, sid, stored_msgs):

@@ -23,7 +23,9 @@ def _ensure_dirs():
 
 def _connect():
     _ensure_dirs()
-    conn = sqlite3.connect(DB_FILE)
+    # timeout 让写操作在锁冲突时等待（而非立刻抛 database is locked），
+    # 缓解记忆维护后台线程与请求读库/写库的并发冲突。
+    conn = sqlite3.connect(DB_FILE, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
@@ -118,13 +120,53 @@ def _parse_memory(raw):
         mem["facts"] = []
     else:
         mem["facts"] = [
-            {"text": f.get("text", ""), "ts": float(f.get("ts", 0))}
+            {"text": str(f.get("text", "")).strip(), "ts": float(f.get("ts", 0))}
             for f in raw["facts"] if isinstance(f, dict) and str(f.get("text", "")).strip()
         ]
     s = raw.get("summary")
-    mem["summary"] = s if isinstance(s, dict) else None
+    mem["summary"] = _parse_summary(s) if s is not None else None
     mem["vector"] = _parse_vm(raw.get("vector")) if isinstance(raw.get("vector"), dict) else _parse_vm(raw.get("vm"))
     return mem
+
+
+def _parse_summary(s):
+    """规范化剧情摘要结构。接收 dict 或 None；缺省返回带默认配置的结构。
+
+    结构：{text, summarized_ts, last_round, slice_rounds, auto_rounds}
+    slice_rounds / auto_rounds 为用户可设置的触发参数，缺省回退到 config 默认。
+    """
+    default = {
+        "text": "",
+        "summarized_ts": None,
+        "last_round": 0,
+        "slice_rounds": config.SUMMARY_SLICE_ROUNDS,
+        "auto_rounds": config.SUMMARY_AUTO_ROUNDS,
+    }
+    if not isinstance(s, dict):
+        return default
+    out = dict(default)
+    out["text"] = str(s.get("text") or "").strip()
+    try:
+        out["summarized_ts"] = float(s["summarized_ts"]) if s.get("summarized_ts") is not None else None
+    except (TypeError, ValueError):
+        out["summarized_ts"] = None
+    try:
+        out["last_round"] = int(s.get("last_round") or 0)
+    except (TypeError, ValueError):
+        out["last_round"] = 0
+    # 切片宽度：>=1，上限给个安全值
+    try:
+        v = int(s.get("slice_rounds"))
+        out["slice_rounds"] = max(1, min(v, 200))
+    except (TypeError, ValueError):
+        pass  # 保留默认
+    # 自动触发阈值：>=0（0 表示仅手动）
+    try:
+        v = int(s.get("auto_rounds"))
+        out["auto_rounds"] = max(0, min(v, 1000))
+    except (TypeError, ValueError):
+        pass  # 保留默认
+    return out
 
 
 def _new_id():
@@ -198,12 +240,17 @@ def change_password(username, current_password, new_password):
 
 
 def _parse_vm(raw):
-    """规范化向量记忆设置：{"enabled": bool, "model": str|None, "recent_n": int}。
-    接收 dict 或 JSON 字符串或 None；缺省为新会话默认（关闭、无模型、N=默认）。"""
+    """规范化向量记忆设置。
+
+    结构：{"enabled": bool, "model": str|None, "recent_n": int, "top_k": int|None}。
+    top_k 语义：None=未设置（用默认 config.VECTOR_MEMORY_TOP_K）；0=不限制（自动召回）；>0=固定 N 条。
+    接收 dict 或 JSON 字符串或 None；缺省为新会话默认（关闭、无模型、N=默认）。
+    """
     default = {
         "enabled": False,
         "model": None,
         "recent_n": config.VECTOR_MEMORY_RECENT_N,
+        "top_k": None,
     }
     if isinstance(raw, str):
         try:
@@ -216,10 +263,19 @@ def _parse_vm(raw):
         recent_n = max(1, min(int(raw.get("recent_n") or default["recent_n"]), 1000))
     except (TypeError, ValueError):
         recent_n = default["recent_n"]
+    # top_k：必须区分「未提供(None)」与「设置为0(不限制)」。
+    # 只有当键存在且值非空时才算显式设置。
+    top_k = default["top_k"]
+    if "top_k" in raw and raw.get("top_k") is not None and raw.get("top_k") != "":
+        try:
+            top_k = max(0, min(int(raw["top_k"]), 500))
+        except (TypeError, ValueError):
+            top_k = default["top_k"]
     return {
         "enabled": bool(raw.get("enabled", False)),
         "model": raw.get("model") or None,
         "recent_n": recent_n,
+        "top_k": top_k,
     }
 
 
@@ -392,17 +448,96 @@ def set_session_facts(username, sid, facts):
 
 
 def set_session_summary(username, sid, text, last_round=None):
-    """写入剧情摘要。text 为空则清除。last_round 为已总结到的对话轮次（计数）。返回新 memory 或 None。"""
+    """写入剧情摘要。text 为空则清除。last_round 为已总结到的对话轮次（计数）。
+    保留已有的用户配置（slice_rounds / auto_rounds）。返回新 memory 或 None。"""
     memory = get_session_memory(username, sid)
     if memory is None:
         return None
     text = (text or "").strip()
+    old = memory.get("summary") or {}
     if text:
-        memory["summary"] = {"text": text, "summarized_ts": time.time(),
-                             "last_round": last_round if last_round is not None else memory.get("summary", {}).get("last_round")}
+        memory["summary"] = {
+            "text": text,
+            "summarized_ts": time.time(),
+            "last_round": last_round if last_round is not None else old.get("last_round", 0),
+            "slice_rounds": old.get("slice_rounds"),
+            "auto_rounds": old.get("auto_rounds"),
+        }
     else:
         memory["summary"] = None
     save_session_memory(username, sid, memory)
+    return memory
+
+
+def set_session_summary_config(username, sid, slice_rounds=None, auto_rounds=None):
+    """设置会话剧情摘要的触发参数（slice_rounds 切片宽度 / auto_rounds 自动触发阈值）。
+
+    只更新传入的参数，其余保留。返回新 memory 或 None（会话不存在）。
+    """
+    memory = get_session_memory(username, sid)
+    if memory is None:
+        return None
+    s = memory.get("summary") or {}
+    changed = False
+    if slice_rounds is not None:
+        try:
+            s = dict(s)
+            s["slice_rounds"] = max(1, min(int(slice_rounds), 200))
+            changed = True
+        except (TypeError, ValueError):
+            pass
+    if auto_rounds is not None:
+        try:
+            s = dict(s)
+            s["auto_rounds"] = max(0, min(int(auto_rounds), 1000))
+            changed = True
+        except (TypeError, ValueError):
+            pass
+    if changed:
+        memory["summary"] = _parse_summary(s)
+        save_session_memory(username, sid, memory)
+    return memory
+
+
+# 哨兵：区分「参数未提供（不更新）」与「显式传入 None（清除/恢复默认）」
+_UNSET = object()
+
+
+def set_session_vector_config(username, sid, top_k=_UNSET, recent_n=None, enabled=None, model=None):
+    """设置会话的向量记忆配置。
+
+    只更新传入的参数，其余保留。返回新 memory 或 None（会话不存在）。
+    top_k 语义：_UNSET=不更新；None=清除（恢复默认，存储为 null）；0=不限制（自动召回）；>0=固定 N 条。
+    """
+    memory = get_session_memory(username, sid)
+    if memory is None:
+        return None
+    vec = dict(memory.get("vector") or _parse_vm(None))
+    changed = False
+    if top_k is not _UNSET:
+        if top_k is None:
+            vec["top_k"] = None
+        else:
+            try:
+                vec["top_k"] = max(0, min(int(top_k), 500))
+            except (TypeError, ValueError):
+                pass
+        changed = True
+    if recent_n is not None:
+        try:
+            vec["recent_n"] = max(1, min(int(recent_n), 1000))
+            changed = True
+        except (TypeError, ValueError):
+            pass
+    if enabled is not None:
+        vec["enabled"] = bool(enabled)
+        changed = True
+    if model is not None:
+        vec["model"] = str(model).strip() or None
+        changed = True
+    if changed:
+        memory["vector"] = _parse_vm(vec)
+        save_session_memory(username, sid, memory)
     return memory
 
 

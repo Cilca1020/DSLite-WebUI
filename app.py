@@ -28,6 +28,7 @@ import re
 import secrets
 import string
 import sys
+import threading
 from datetime import timedelta
 
 from flask import Flask, Response, jsonify, request, send_from_directory, session
@@ -359,9 +360,13 @@ def api_chat():
 
     params = _validate_params(data)
 
+    # 在请求上下文内捕获 username（生成器在流式迭代时请求上下文可能已销毁，
+    # 因此不能在生成器内部访问 flask.session）
+    current_username = session.get("username")
+
     # 组装完整消息：system prompt 在前
     try:
-        context = _build_chat_context(user_messages, sid, data, session["username"], params)
+        context = _build_chat_context(user_messages, sid, data, current_username, params)
     except vector_memory.VectorMemoryError as e:
         app.logger.error("向量记忆不可用：%s", e)
         return jsonify({"error": f"向量记忆不可用：{e}", "vector_memory_error": True}), 502
@@ -392,20 +397,22 @@ def api_chat():
         except RuntimeError as e:
             yield f"\n[错误] {e}"
         finally:
-            # 流式结束后触发记忆维护（后台，不阻塞响应收尾）：
-            # ① 动态关键事实抽取（每次对话后增量尝试）② 剧情摘要（达到阈值自动总结）
-            if sid and session.get("username"):
-                try:
-                    _run_memory_maintenance(api_key, sid)
-                except Exception:  # noqa: BLE001
-                    app.logger.exception("记忆维护失败")
+            # 流式结束后触发记忆维护。注意：必须放到后台线程执行，
+            # 因为事实抽取 / 剧情总结会发起真实的 LLM 调用（耗时可能数十秒），
+            # 若在 finally 里同步执行会阻塞流式响应收尾，前端会一直等连接关闭。
+            # 使用已捕获的 current_username 闭包变量，不访问 flask.session。
+            if sid and current_username:
+                _spawn_memory_maintenance(api_key, sid, current_username)
 
     return Response(generate(), mimetype="text/plain; charset=utf-8")
 
 
-def _run_memory_maintenance(api_key, sid):
-    """对话结束后触发记忆维护：事实抽取 + 自动剧情总结。异常在调用方捕获。"""
-    username = session["username"]
+def _run_memory_maintenance(api_key, sid, username):
+    """对话结束后触发记忆维护：事实抽取 + 自动剧情总结。异常在调用方捕获。
+
+    注意：该函数在流式响应收尾时调用，此时请求上下文可能已销毁，
+    因此 username 必须由调用方在上下文内捕获后传入，不能在内部访问 flask.session。
+    """
     stored = storage.get_session(username, sid)
     stored_msgs = stored["messages"] if stored else []
     # ① 动态关键事实：每次对话后增量抽取（失败不阻塞）
@@ -421,26 +428,90 @@ def _run_memory_maintenance(api_key, sid):
         app.logger.exception("剧情摘要自动总结失败")
 
 
+# 记忆维护后台线程的去重集合：记录正在维护中的 (username, sid)，避免并发重复触发
+_memory_maintenance_lock = threading.Lock()
+_memory_maintenance_active = set()
+
+
+def _spawn_memory_maintenance(api_key, sid, username):
+    """在后台线程执行记忆维护，不阻塞流式响应收尾。
+
+    用 set 去重：同一会话的维护任务已在运行时不重复启动，防止并发重复总结。
+    线程为 daemon，随进程退出，不阻塞服务器关闭。
+    """
+    key = (username, sid)
+    with _memory_maintenance_lock:
+        if key in _memory_maintenance_active:
+            return
+        _memory_maintenance_active.add(key)
+
+    def worker():
+        try:
+            _run_memory_maintenance(api_key, sid, username)
+        except Exception:  # noqa: BLE001
+            app.logger.exception("记忆维护失败")
+        finally:
+            with _memory_maintenance_lock:
+                _memory_maintenance_active.discard(key)
+
+    t = threading.Thread(target=worker, daemon=True, name=f"mem-maint-{sid[:8]}")
+    t.start()
+
+
 def _log_context(sid, messages):
     """把实际发给 LLM 的完整上下文打印到控制台，便于观察四层记忆注入效果。"""
     total_chars = sum(len(m.get("content", "")) for m in messages)
     print("\n" + "=" * 72, flush=True)
     print(f"[上下文] session={sid or '-'} 共 {len(messages)} 条，总字符 {total_chars}", flush=True)
     print("-" * 72, flush=True)
+
+    # 分段打印：标记各记忆层边界，重点划清「向量记忆（第④层）」的范围
+    section = None  # 当前所在区块：card/facts/summary/vector/recent/plain
     for i, m in enumerate(messages):
         role = str(m.get("role", "?")).ljust(9)
         content = m.get("content", "")
-        # 标记记忆层（system 里的背景性内容）
-        tag = ""
-        if content.startswith("【核心设定"):
-            tag = " [①核心设定卡]"
+        src = m.get("_src")
+
+        # 根据 _src 或内容判断当前区块
+        if src == "vector":
+            cur = "vector"
+        elif src == "recent":
+            cur = "recent"
+        elif content.startswith("【核心设定"):
+            cur = "card"
         elif content.startswith("【当前剧情中的关键事实"):
-            tag = " [②动态关键事实]"
+            cur = "facts"
         elif content.startswith("【剧情摘要"):
-            tag = " [③剧情摘要]"
-        # 每条只打印前 200 字，避免超长会话刷屏；完整内容按需自行查看数据库
-        snippet = content.replace("\n", " / ")[:200]
-        print(f"  {i:>2} [{role}]{tag} {snippet}{'...' if len(content) > 200 else ''}", flush=True)
+            cur = "summary"
+        else:
+            cur = "plain"
+
+        # 区块切换时打印分界标题
+        if cur != section:
+            if section is not None:
+                # 上一个区块结束
+                print("  " + "-" * 68, flush=True)
+            headers = {
+                "card":   "▼ ① 核心设定卡（无条件常驻）",
+                "facts":  "▼ ② 动态关键事实（无条件常驻）",
+                "summary":"▼ ③ 剧情摘要（无条件常驻）",
+                "vector": "▼ ④ 向量记忆检索片段（按需召回）",
+                "recent": "▼ 最近对话窗口",
+                "plain":  "▼ 对话内容",
+            }
+            print(f"  {headers.get(cur, cur)}", flush=True)
+            section = cur
+
+        # 给向量检索片段加行内标记，进一步划清范围
+        tag = ""
+        if cur == "vector":
+            tag = " [向量检索]"
+        elif cur == "recent":
+            tag = " [最近对话]"
+
+        # 打印完整文本（不做字符截断）；多行内容用「 / 」标记合并，便于单行阅读
+        full = content.replace("\n", " / ")
+        print(f"  {i:>2} [{role}]{tag} {full}", flush=True)
     print("=" * 72, flush=True)
 
 
@@ -528,6 +599,90 @@ def api_run_summary(sid):
     return jsonify(result)
 
 
+@app.route("/api/sessions/<sid>/summary-config", methods=["GET", "POST"])
+def api_summary_config(sid):
+    """读取 / 设置会话剧情摘要的触发参数。
+
+    GET 返回当前配置；POST body 可选 {"slice_rounds": int, "auto_rounds": int}，
+    传哪个更新哪个。auto_rounds=0 表示关闭自动总结（仅手动）。
+    """
+    username = session["username"]
+    if request.method == "GET":
+        mem = storage.get_session_memory(username, sid)
+        if mem is None:
+            return jsonify({"error": "会话不存在"}), 404
+        s = mem.get("summary") or {}
+        return jsonify({
+            "slice_rounds": s.get("slice_rounds"),
+            "auto_rounds": s.get("auto_rounds"),
+        })
+    data = request.get_json(force=True, silent=True) or {}
+    slice_rounds = data.get("slice_rounds")
+    auto_rounds = data.get("auto_rounds")
+    if slice_rounds is None and auto_rounds is None:
+        return jsonify({"error": "至少提供 slice_rounds 或 auto_rounds 之一"}), 400
+    mem = storage.set_session_summary_config(
+        username, sid, slice_rounds=slice_rounds, auto_rounds=auto_rounds
+    )
+    if mem is None:
+        return jsonify({"error": "会话不存在"}), 404
+    s = mem.get("summary") or {}
+    return jsonify({
+        "slice_rounds": s.get("slice_rounds"),
+        "auto_rounds": s.get("auto_rounds"),
+    })
+
+
+@app.route("/api/sessions/<sid>/vector-config", methods=["GET", "POST"])
+def api_vector_config(sid):
+    """读取 / 设置会话向量记忆配置。
+
+    GET 返回当前配置（enabled/model/recent_n/top_k）。
+    POST body 可选 {"enabled": bool, "model": str, "recent_n": int, "top_k": int}，
+    传哪个更新哪个。
+
+    top_k 语义：0 = 不限制数量（自动按相似度阈值召回）；>0 = 固定返回 N 条；
+    不传 / 传 None = 使用全局默认。响应里用 "auto" 表示自动召回（即配置值为 0）。
+    """
+    username = session["username"]
+    if request.method == "GET":
+        mem = storage.get_session_memory(username, sid)
+        if mem is None:
+            return jsonify({"error": "会话不存在"}), 404
+        v = mem.get("vector") or {}
+        return jsonify({
+            "enabled": bool(v.get("enabled")),
+            "model": v.get("model"),
+            "recent_n": v.get("recent_n"),
+            "top_k": v.get("top_k"),
+            "auto": v.get("top_k") == 0,  # 是否为自动召回
+        })
+    data = request.get_json(force=True, silent=True) or {}
+    # 支持 "auto": true 快捷方式 -> top_k=0
+    top_k = data.get("top_k")
+    if data.get("auto") is True:
+        top_k = 0
+    elif "top_k" not in data:
+        top_k = storage._UNSET  # 未传 top_k：不更新该字段
+    mem = storage.set_session_vector_config(
+        username, sid,
+        top_k=top_k,
+        recent_n=data.get("recent_n"),
+        enabled=data.get("enabled"),
+        model=data.get("model"),
+    )
+    if mem is None:
+        return jsonify({"error": "会话不存在"}), 404
+    v = mem.get("vector") or {}
+    return jsonify({
+        "enabled": bool(v.get("enabled")),
+        "model": v.get("model"),
+        "recent_n": v.get("recent_n"),
+        "top_k": v.get("top_k"),
+        "auto": v.get("top_k") == 0,
+    })
+
+
 @app.route("/api/sessions/<sid>/facts-refresh", methods=["POST"])
 def api_refresh_facts(sid):
     """手动触发一次动态关键事实抽取。body: {"api_key": "..."}。"""
@@ -545,6 +700,58 @@ def api_refresh_facts(sid):
     if new_facts is None:
         return jsonify({"error": "抽取失败或没有新增事实"}), 502
     return jsonify({"facts": new_facts})
+
+
+@app.route("/api/sessions/<sid>/refresh", methods=["POST"])
+def api_refresh_memory(sid):
+    """一键手动刷新全部记忆层：动态关键事实抽取 + 剧情摘要总结。
+
+    与自动维护不同，手动刷新会【强制】执行两个动作（不依赖自动触发阈值），
+    把会话的记忆同步到当前对话状态。body: {"api_key": "..."}。
+
+    返回 {facts: 更新后的事实列表或 null, summary: {...} 或 null, errors: [...]}。
+    单层失败不阻塞另一层，失败信息放入 errors。
+    """
+    username = session["username"]
+    data = request.get_json(force=True, silent=True) or {}
+    api_key = str(data.get("api_key") or "").strip()
+    if not api_key:
+        return jsonify({"error": "缺少 api_key"}), 400
+    stored = storage.get_session(username, sid)
+    if not stored:
+        return jsonify({"error": "会话不存在"}), 404
+
+    errors = []
+    facts_result = None
+    summary_result = None
+
+    # ① 动态关键事实：强制增量抽取
+    try:
+        new_facts = memory_engine.extract_facts_for_session(
+            api_key, username, sid, stored["messages"]
+        )
+        if new_facts is not None:
+            facts_result = new_facts
+    except Exception as e:  # noqa: BLE001
+        app.logger.exception("手动刷新：事实抽取失败")
+        errors.append(f"事实抽取失败: {e}")
+
+    # ② 剧情摘要：强制增量总结（手动刷新不依赖自动阈值）
+    try:
+        r = memory_engine.run_summary(api_key, username, sid, stored["messages"])
+        if r.get("ok"):
+            summary_result = r.get("summary")
+        else:
+            errors.append(r.get("error", "总结失败"))
+    except Exception as e:  # noqa: BLE001
+        app.logger.exception("手动刷新：剧情总结失败")
+        errors.append(f"剧情总结失败: {e}")
+
+    return jsonify({
+        "facts": facts_result,
+        "summary": summary_result,
+        "errors": errors,
+    })
 
 
 # ------------------------- 角色卡库 API（跨会话复用） -------------------------

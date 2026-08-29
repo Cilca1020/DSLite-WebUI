@@ -35,6 +35,7 @@ async function ensureSession() {
       enabled: vmLoadEnabled(),
       model: vmLoadModel(),
       recent_n: vmLoadN(),
+      top_k: vmLoadTopK(),
     },
   });
   currentSessionId = s.id;
@@ -54,6 +55,7 @@ async function saveVmSettings() {
         enabled: vmLoadEnabled(),
         model: vmLoadModel(),
         recent_n: vmLoadN(),
+        top_k: vmLoadTopK(),
       },
     });
   } catch (_) {
@@ -74,6 +76,7 @@ async function saveSessionConfig() {
       enabled: vmLoadEnabled(),
       model: vmLoadModel(),
       recent_n: vmLoadN(),
+      top_k: vmLoadTopK(),
     },
   };
   try {
@@ -210,6 +213,7 @@ function resetChatUI() {
   sessionHasMore = false;
   sessionMinIndex = 0;
   applyVmToUI(null); // 新建对话：向量记忆默认关闭
+  if (window.resetMemoryPanel) window.resetMemoryPanel(); // 记忆页：未选中会话占位
   const box = $("#chatBox");
   box.innerHTML = "";
   showEmptyHint(box); // 未选中对话时居中显示「你好」欢迎提示
@@ -268,6 +272,8 @@ async function openSession(id, opts = {}) {
   // 载入该会话独立的 model + 推理参数 + 向量记忆设置
   applyConfigToUI(s.model, s.params);
   applyVmToUI(s.vm);
+  // 记忆分页：切换到新会话时重新加载其四层记忆（设置面板开着时用户可见）
+  if (window.loadMemoryPanel) window.loadMemoryPanel();
   // content 始终是纯回答，直接用于模型上下文；reasoning 仅渲染；files 仅 user 消息携带。
   // 上下文仅包含已加载的消息，上滑加载更早消息后自动扩充。
   conversation = (s.messages || []).map((m) => ({ role: m.role, content: m.content, files: m.files || null }));
