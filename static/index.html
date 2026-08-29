@@ -240,7 +240,7 @@
 
         <!-- ⓪ 系统提示词（第 0 层，作为 system 消息最先注入） + 最近 N 轮对话（上下文保留策略） -->
         <section class="settings-group" id="memorySystemGroup">
-          <h3>⓪ 系统提示词 <span class="memory-layer-tag">无条件注入</span></h3>
+          <h3>⓪ 系统提示词</h3>
           <textarea id="system_prompt" rows="4" placeholder="设定模型的基础行为、语气、规则与世界观…"></textarea>
           <span class="param-hint">作为系统消息随每次请求最先注入（位于人物卡之前），按会话单独保存。</span>
           <div class="param-field">
@@ -253,7 +253,7 @@
 
         <!-- ① 人物卡（核心设定卡） -->
         <section class="settings-group" id="memoryCardGroup">
-          <h3>① 人物卡 <span class="memory-layer-tag">无条件注入</span></h3>
+          <h3>① 人物卡</h3>
           <textarea id="memoryCardInput" rows="6" placeholder="写下角色的核心设定（性格、身份、背景、说话风格…）"></textarea>
           <div class="memory-actions">
             <button id="memoryCardSaveBtn" class="mini-btn" type="button">保存设定</button>
@@ -270,18 +270,30 @@
           <h3 class="memory-card-head">
             <span>② 动态关键事实</span>
             <span class="memory-head-right">
-              <span class="memory-layer-tag">无条件注入</span>
               <label class="memory-card-switch" title="启用/停用动态关键事实">
                 <input id="memoryFactsEnabled" type="checkbox" />
                 <span class="switch-track"><span class="switch-thumb"></span></span>
               </label>
             </span>
           </h3>
+          <!-- 自动总结开关：卡片总开关的下一级；关闭时后台不自动抽取，仅支持手动维护 -->
+          <div class="memory-sub-row">
+            <label class="memory-sub-switch" title="开启时每轮对话后自动抽取事实；关闭后仅支持手动添加/编辑与「重新总结」">
+              <span class="memory-sub-label">自动总结</span>
+              <input id="memoryFactsAuto" type="checkbox" checked />
+              <span class="switch-track"><span class="switch-thumb"></span></span>
+            </label>
+          </div>
+          <span class="param-hint memory-sub-hint">开启时每轮对话后自动抽取事实并去重合并；关闭后不再自动抽取，仅支持手动增删改与「重新总结」。</span>
           <div id="memoryFactsList" class="memory-facts-list"></div>
+          <div class="memory-fact-add">
+            <input id="memoryFactAddInput" type="text" placeholder="手动添加一条事实…" maxlength="200" />
+            <button id="memoryFactAddBtn" class="mini-btn" type="button">添加</button>
+          </div>
           <div class="memory-actions">
             <button id="memoryFactsRefreshBtn" class="mini-btn" type="button">重新总结</button>
           </div>
-          <span class="param-hint">对话中按间隔自动抽取重要设定并去重合并；也可随时点击「重新总结」从全部历史重新抽取（需已填写 API Key）。关闭开关后保留已抽事实但不注入、不自动抽取。</span>
+          <span class="param-hint">开启「自动总结」时每轮对话后自动抽取重要设定并去重合并；关闭后仅支持手动增删改与「重新总结」从全部历史重新抽取（需已填写 API Key）。条目可手动增删改；上锁（🔒）的条目不会被重新总结覆盖。关闭总开关后保留已抽事实但不注入、不维护。</span>
         </section>
 
         <!-- ③ 剧情摘要 -->
@@ -289,7 +301,6 @@
           <h3 class="memory-card-head">
             <span>③ 剧情摘要</span>
             <span class="memory-head-right">
-              <span class="memory-layer-tag">无条件注入</span>
               <label class="memory-card-switch" title="启用/停用剧情摘要">
                 <input id="memorySummaryEnabled" type="checkbox" />
                 <span class="switch-track"><span class="switch-thumb"></span></span>
@@ -318,7 +329,6 @@
           <h3 class="memory-card-head">
             <span>④ 向量记忆</span>
             <span class="memory-head-right">
-              <span class="memory-layer-tag">按需召回</span>
               <label class="memory-card-switch" title="启用/停用向量记忆">
                 <input id="vmEnabled" type="checkbox" />
                 <span class="switch-track"><span class="switch-thumb"></span></span>

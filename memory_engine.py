@@ -304,13 +304,17 @@ def extract_facts(api_key, old_facts, new_messages):
     now = time.time()
     # 逐条去重合并：先保留旧事实（未被推翻的），再追加新事实。
     # 用「精确匹配 + 相似度阈值」双重去重，兜底 LLM 合并不彻底导致的同义重复。
+    locked_texts = {f.get("text", "") for f in old_facts if f.get("locked")}
     merged = []
     for t in _dedup_facts([f.get("text", "") for f in old_facts] + new_facts):
         if not t:
             continue
         # 旧事实沿用原 ts，新事实用当前时间
         ts = next((f.get("ts", now) for f in old_facts if f.get("text", "") == t), now)
-        merged.append({"text": t, "ts": ts})
+        item = {"text": t, "ts": ts}
+        if t in locked_texts:
+            item["locked"] = True
+        merged.append(item)
     return merged[: config.FACT_MAX]
 
 
@@ -582,12 +586,17 @@ def should_auto_summary(username, sid, stored_msgs=None):
     return (total_rounds - last_round) >= auto_rounds
 
 
-def extract_facts_for_session(api_key, username, sid, stored_msgs, full=False):
+def extract_facts_for_session(api_key, username, sid, stored_msgs, full=False, auto=True):
     """对会话做一次关键事实抽取，落库并返回新事实列表。
+
+    auto=True（后台自动触发）：需要 facts_enabled（卡片总开关）与 facts_auto
+    （自动总结开关）同时开启才执行，任一关闭返回 None。
+    auto=False（用户手动触发，如「重新总结」按钮 / 一键刷新）：只看卡片总开关，
+    不受自动总结开关影响。
 
     full=False（默认，增量）：只喂最近若干条对话，结果与旧事实合并去重。
     full=True（重新总结）：不带旧事实，用纯抽取提示词对全部历史重新生成，
-    生成的新列表【整体替换】旧列表（旧事实不会保留，除非历史中重新抽出了它）。
+    生成的新列表【整体替换】旧列表，但上锁条目原样保留（见 _merge_locked_facts）。
 
     失败返回 None（优雅降级，不阻塞主对话）。由调用方决定触发频率。
     """
@@ -596,8 +605,11 @@ def extract_facts_for_session(api_key, username, sid, stored_msgs, full=False):
     memory = _get_memory(username, sid)
     if memory is None:
         return None
-    # 动态关键事实开关关闭：不自动抽取（已有事实保留，只是不上传）
+    # 卡片总开关关闭：不抽取（已有事实保留，只是不上传）
     if not memory.get("facts_enabled", True):
+        return None
+    # 自动总结开关关闭且为后台自动触发：不抽取（手动仍可用）
+    if auto and not memory.get("facts_auto", True):
         return None
     stored = stored_msgs if stored_msgs is not None else (
         storage.get_session(username, sid).get("messages", []) if storage.get_session(username, sid) else []
@@ -610,8 +622,11 @@ def extract_facts_for_session(api_key, username, sid, stored_msgs, full=False):
         return None
     facts = memory.get("facts") or []
     if full:
-        # 重新总结：空旧事实走纯抽取提示词，结果整体替换（不合并、不保留旧列表）
-        new_facts = extract_facts(api_key, [], chat)
+        # 重新总结：锁定的条目原样保留（不被重新生成影响），
+        # 其余条目不带旧事实、用纯抽取提示词对全部历史重新生成，再与锁定条目去重合并。
+        locked = [f for f in facts if f.get("locked")]
+        regenerated = extract_facts(api_key, [], chat)
+        new_facts = _merge_locked_facts(locked, regenerated)
         if not new_facts:
             return None
         if [f.get("text") for f in new_facts] != [f.get("text") for f in facts]:
@@ -627,3 +642,21 @@ def extract_facts_for_session(api_key, username, sid, stored_msgs, full=False):
         storage.set_session_facts(username, sid, new_facts)
         return new_facts
     return None
+
+
+def _merge_locked_facts(locked, regenerated):
+    """锁定事实（原 ts / locked 标记）优先保留，与重新生成结果去重合并。
+
+    重新生成结果中与锁定条目精确相同或相似的会被丢弃（锁定优先）。
+    """
+    now = time.time()
+    locked_map = {f.get("text", ""): f for f in locked}
+    reg_map = {f.get("text", ""): f for f in regenerated}
+    merged = []
+    for t in _dedup_facts([f.get("text", "") for f in locked] + [f.get("text", "") for f in regenerated]):
+        src = locked_map.get(t)
+        if src:
+            merged.append({"text": t, "ts": src.get("ts", now), "locked": True})
+        else:
+            merged.append({"text": t, "ts": (reg_map.get(t) or {}).get("ts", now)})
+    return merged[: config.FACT_MAX]

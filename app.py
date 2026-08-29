@@ -29,6 +29,7 @@ import secrets
 import string
 import sys
 import threading
+import time
 from datetime import timedelta
 
 from flask import Flask, Response, jsonify, request, send_from_directory, session
@@ -563,12 +564,64 @@ def api_apply_card_lib(sid):
 
 @app.route("/api/sessions/<sid>/facts", methods=["POST"])
 def api_set_facts(sid):
-    """整体覆盖动态关键事实。body: {"facts": [{"text": "...", "ts": ...}]}。"""
+    """整体覆盖动态关键事实。body: {"facts": [{"text": "...", "ts": ..., "locked": bool}]}。"""
     username = session["username"]
     data = request.get_json(force=True, silent=True) or {}
     facts = data.get("facts")
     if not isinstance(facts, list):
         return jsonify({"error": "facts 需为数组"}), 400
+    mem = storage.set_session_facts(username, sid, facts)
+    if mem is None:
+        return jsonify({"error": "会话不存在"}), 404
+    return jsonify({"memory": mem})
+
+
+@app.route("/api/sessions/<sid>/facts-item", methods=["POST"])
+def api_facts_item(sid):
+    """关键事实条目级操作（增删改 / 上锁解锁）。
+
+    body: {"op": "add"|"update"|"delete"|"lock", "index": int, "text": str, "locked": bool}
+    - add:    追加一条 {"text", "locked"}（index 忽略）
+    - update: 修改 index 处文本（上锁条目也可手动改，锁只防重新生成）
+    - delete: 删除 index 处条目（上锁条目也可手动删）
+    - lock:   设置 index 处 locked 标记（locked=true 上锁 / false 解锁）
+    """
+    username = session["username"]
+    data = request.get_json(force=True, silent=True) or {}
+    op = data.get("op")
+    mem = storage.get_session_memory(username, sid)
+    if mem is None:
+        return jsonify({"error": "会话不存在"}), 404
+    facts = [dict(f) for f in (mem.get("facts") or [])]
+    text = str(data.get("text") or "").strip()
+    try:
+        idx = int(data.get("index"))
+    except (TypeError, ValueError):
+        idx = -1
+    in_range = 0 <= idx < len(facts)
+
+    if op == "add":
+        if not text:
+            return jsonify({"error": "内容不能为空"}), 400
+        facts.append({"text": text, "ts": time.time(), "locked": bool(data.get("locked", False))})
+    elif op == "update":
+        if not in_range:
+            return jsonify({"error": "索引越界"}), 400
+        if not text:
+            return jsonify({"error": "内容不能为空"}), 400
+        facts[idx]["text"] = text
+        facts[idx]["ts"] = time.time()
+    elif op == "delete":
+        if not in_range:
+            return jsonify({"error": "索引越界"}), 400
+        facts.pop(idx)
+    elif op == "lock":
+        if not in_range:
+            return jsonify({"error": "索引越界"}), 400
+        facts[idx]["locked"] = bool(data.get("locked", True))
+    else:
+        return jsonify({"error": "未知操作"}), 400
+
     mem = storage.set_session_facts(username, sid, facts)
     if mem is None:
         return jsonify({"error": "会话不存在"}), 404
@@ -647,7 +700,8 @@ def api_memory_switches(sid):
     """批量设置记忆卡片开关（2/3/4 层）与数值恢复，供「一键配置 / 关闭智能总结 / 单卡开关」调用。
 
     body 可选：
-      facts_enabled:   bool  ② 动态关键事实开关
+      facts_enabled:   bool  ② 动态关键事实开关（卡片总开关）
+      facts_auto:      bool  ② 自动总结开关（总开关下一级；关闭时后台不自动抽取）
       summary_enabled: bool  ③ 剧情摘要开关
       vector_enabled:  bool  ④ 向量记忆开关
       reset_values:    bool  一键配置：恢复数值默认（最近 N 轮=10、摘要切片/自动间隔、向量 TopK/recent_n）
@@ -655,12 +709,13 @@ def api_memory_switches(sid):
     """
     username = session["username"]
     data = request.get_json(force=True, silent=True) or {}
-    if not any(k in data for k in ("facts_enabled", "summary_enabled", "vector_enabled", "reset_values")):
+    if not any(k in data for k in ("facts_enabled", "facts_auto", "summary_enabled", "vector_enabled", "reset_values")):
         return jsonify({"error": "缺少开关参数"}), 400
     mem = storage.set_session_memory_switches(
         username,
         sid,
         facts_enabled=data.get("facts_enabled"),
+        facts_auto=data.get("facts_auto"),
         summary_enabled=data.get("summary_enabled"),
         vector_enabled=data.get("vector_enabled"),
         reset_values=bool(data.get("reset_values")),
@@ -751,7 +806,7 @@ def api_refresh_facts(sid):
     if not stored:
         return jsonify({"error": "会话不存在"}), 404
     new_facts = memory_engine.extract_facts_for_session(
-        api_key, username, sid, stored["messages"], full=bool(data.get("full"))
+        api_key, username, sid, stored["messages"], full=bool(data.get("full")), auto=False
     )
     if new_facts is None:
         return jsonify({"error": "抽取失败或没有新增事实"}), 502
@@ -781,10 +836,10 @@ def api_refresh_memory(sid):
     facts_result = None
     summary_result = None
 
-    # ① 动态关键事实：强制增量抽取
+    # ① 动态关键事实：强制增量抽取（用户手动触发，不受自动总结开关影响）
     try:
         new_facts = memory_engine.extract_facts_for_session(
-            api_key, username, sid, stored["messages"]
+            api_key, username, sid, stored["messages"], auto=False
         )
         if new_facts is not None:
             facts_result = new_facts

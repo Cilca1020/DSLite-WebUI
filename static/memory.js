@@ -70,31 +70,7 @@ function renderMemoryPanel() {
   if (cardInput && !cardInput.dataset.dirty) cardInput.value = card.content || "";
 
   // ② 动态关键事实
-  const facts = Array.isArray(mem.facts) ? mem.facts : [];
-  const factsList = memEl("memoryFactsList");
-  if (factsList) {
-    factsList.innerHTML = "";
-    if (!facts.length) {
-      const p = document.createElement("p");
-      p.className = "memory-empty-text";
-      p.textContent = "暂无事实。对话中会自动抽取，也可点击「重新总结」。";
-      factsList.appendChild(p);
-    } else {
-      facts.forEach((f, i) => {
-        const row = document.createElement("div");
-        row.className = "memory-fact-row";
-        const idx = document.createElement("span");
-        idx.className = "memory-fact-index";
-        idx.textContent = String(i + 1).padStart(2, "0");
-        const text = document.createElement("span");
-        text.className = "memory-fact-text";
-        text.textContent = (f && f.text) ? String(f.text) : "";
-        row.appendChild(idx);
-        row.appendChild(text);
-        factsList.appendChild(row);
-      });
-    }
-  }
+  renderFacts();
 
   // 最近 N 轮上下文策略
   const recentN = (mem.recent_n !== undefined && mem.recent_n !== null)
@@ -158,6 +134,9 @@ function refreshMemoryCardStates() {
   if (factsSwitch) factsSwitch.checked = factsEnabled;
   const factsGroup = memEl("memoryFactsGroup");
   if (factsGroup) factsGroup.classList.toggle("memory-off", !factsEnabled);
+  // 自动总结开关（总开关下一级）：默认开启
+  const factsAuto = memEl("memoryFactsAuto");
+  if (factsAuto) factsAuto.checked = mem.facts_auto !== false;
 
   // ③ 剧情摘要
   const summary = mem.summary || {};
@@ -255,6 +234,128 @@ function bindMemoryCardLib() {
       btn.disabled = false;
     }
   };
+}
+
+// ② 动态关键事实：条目级操作 API（增删改 / 上锁解锁）
+async function factsItemOp(op, index, extra = {}) {
+  if (!currentSessionId) { showToast("请先选择对话"); return null; }
+  try {
+    const r = await apiPost("/api/sessions/" + currentSessionId + "/facts-item", Object.assign({ op, index }, extra));
+    if (r && r.error) { showToast(r.error); return null; }
+    if (r && r.memory) {
+      MEMORY_STATE = r.memory;
+      renderFacts();
+    }
+    return r;
+  } catch (_) {
+    showToast("操作失败");
+    return null;
+  }
+}
+
+// 小图标按钮（锁 / 编辑 / 删除）
+function factIconBtn(title, svgPath, onClick) {
+  const btn = document.createElement("button");
+  btn.className = "fact-icon-btn";
+  btn.type = "button";
+  btn.title = title;
+  btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + svgPath + "</svg>";
+  btn.addEventListener("click", onClick);
+  return btn;
+}
+
+// ② 渲染事实条目列表：每条带 上锁/编辑/删除 操作
+function renderFacts() {
+  const mem = MEMORY_STATE || {};
+  const facts = Array.isArray(mem.facts) ? mem.facts : [];
+  const factsList = memEl("memoryFactsList");
+  if (!factsList) return;
+  factsList.innerHTML = "";
+  if (!facts.length) {
+    const p = document.createElement("p");
+    p.className = "memory-empty-text";
+    p.textContent = "暂无事实。对话中会自动抽取，也可手动添加或点击「重新总结」。";
+    factsList.appendChild(p);
+    return;
+  }
+  const LOCK_SVG = '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>';               // 闭锁
+  const UNLOCK_SVG = '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.9-.9"/>';            // 开锁
+  const EDIT_SVG = '<path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>';
+  const DEL_SVG = '<path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>';
+  facts.forEach((f, i) => {
+    const locked = !!(f && f.locked);
+    const row = document.createElement("div");
+    row.className = "memory-fact-row" + (locked ? " fact-locked" : "");
+
+    const idx = document.createElement("span");
+    idx.className = "memory-fact-index";
+    idx.textContent = String(i + 1).padStart(2, "0");
+
+    const text = document.createElement("span");
+    text.className = "memory-fact-text";
+    text.textContent = (f && f.text) ? String(f.text) : "";
+
+    const actions = document.createElement("span");
+    actions.className = "memory-fact-actions";
+
+    // 上锁/解锁：即时生效
+    actions.appendChild(factIconBtn(locked ? "解锁（重新总结时可被更新）" : "上锁（不被重新总结覆盖）", locked ? UNLOCK_SVG : LOCK_SVG, async (e) => {
+      const r = await factsItemOp("lock", i, { locked: !locked });
+      if (r) showToast(!locked ? "已上锁" : "已解锁");
+    }));
+
+    // 编辑：文本变输入框，Enter/失焦保存，Esc 取消
+    actions.appendChild(factIconBtn("编辑", EDIT_SVG, () => {
+      if (row.querySelector("input")) return;
+      const input = document.createElement("input");
+      input.className = "memory-fact-edit";
+      input.type = "text";
+      input.maxLength = 200;
+      input.value = text.textContent;
+      row.replaceChild(input, text);
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+      let done = false;
+      const finish = (save) => {
+        if (done) return;
+        done = true;
+        const v = input.value.trim();
+        row.replaceChild(text, input);
+        if (save && v && v !== text.textContent) factsItemOp("update", i, { text: v });
+      };
+      input.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") finish(true);
+        else if (ev.key === "Escape") finish(false);
+      });
+      input.addEventListener("blur", () => finish(true));
+    }));
+
+    // 删除
+    actions.appendChild(factIconBtn("删除", DEL_SVG, async () => {
+      const r = await factsItemOp("delete", i);
+      if (r) showToast("已删除");
+    }));
+
+    row.appendChild(idx);
+    row.appendChild(text);
+    row.appendChild(actions);
+    factsList.appendChild(row);
+  });
+}
+
+// ② 绑定手动添加条目
+function bindFactAdd() {
+  const input = memEl("memoryFactAddInput");
+  const btn = memEl("memoryFactAddBtn");
+  if (!input || !btn) return;
+  const add = async () => {
+    const v = input.value.trim();
+    if (!v) return showToast("内容不能为空");
+    const r = await factsItemOp("add", -1, { text: v });
+    if (r) { input.value = ""; showToast("已添加"); }
+  };
+  btn.addEventListener("click", add);
+  input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") add(); });
 }
 
 // ② 动态关键事实：手动重新总结（从全部历史重新抽取并合并覆盖）
@@ -445,6 +546,24 @@ function bindMemoryMasterButtons() {
 
 // 卡片 ②③ 右上角开关：点击即时带动画并持久化到后端（④ 由 main.js 处理）
 function bindMemoryCardSwitches() {
+  // ② 自动总结开关（总开关下一级）：关闭时后台不自动抽取，手动仍可用
+  const factsAuto = memEl("memoryFactsAuto");
+  if (factsAuto) {
+    factsAuto.addEventListener("change", async () => {
+      if (!currentSessionId) { refreshMemoryCardStates(); return showToast("请先选择对话"); }
+      const on = factsAuto.checked;
+      try {
+        const r = await apiPost("/api/sessions/" + currentSessionId + "/memory-switches", { facts_auto: on });
+        if (r && r.error) throw new Error(r.error);
+        MEMORY_STATE = r.memory || MEMORY_STATE;
+        showToast(on ? "已开启自动总结" : "已关闭自动总结");
+      } catch (e) {
+        factsAuto.checked = !on; // 失败回滚
+        showToast(e && e.message ? e.message : "设置失败");
+      }
+    });
+  }
+
   // ② 动态关键事实
   const factsSwitch = memEl("memoryFactsEnabled");
   if (factsSwitch) {
@@ -494,6 +613,7 @@ function bindMemoryCardSwitches() {
 function initMemoryPanel() {
   bindMemoryCard();
   bindMemoryCardLib();
+  bindFactAdd();
   bindMemoryFacts();
   bindMemoryContext();
   bindMemorySummary();

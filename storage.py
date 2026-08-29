@@ -101,6 +101,7 @@ def _default_memory():
         "card": None,      # 核心设定卡 {"content","source","updated_at"}
         "facts": [],       # 动态关键事实 [{"text","ts"}]
         "facts_enabled": True,  # ② 动态关键事实开关（关闭时保留内容但停止注入/维护）
+        "facts_auto": True,     # ② 自动总结开关（总开关下一级；关闭时不触发后台抽取，仅手动）
         "summary": None,   # 剧情摘要 {"text","summarized_ts","last_round","enabled",...}
         "recent_n": config.MEMORY_RECENT_N_DEFAULT,  # 最近 N 轮（新会话默认 0 = 全量塞满）
         "vector": _parse_vm(None),  # 向量记忆设置（迁移自旧 vm）
@@ -132,10 +133,15 @@ def _parse_memory(raw):
         mem["facts"] = []
     else:
         mem["facts"] = [
-            {"text": str(f.get("text", "")).strip(), "ts": float(f.get("ts", 0))}
+            {
+                "text": str(f.get("text", "")).strip(),
+                "ts": float(f.get("ts", 0)),
+                "locked": bool(f.get("locked", False)),  # 上锁条目不被重新生成影响
+            }
             for f in raw["facts"] if isinstance(f, dict) and str(f.get("text", "")).strip()
         ]
     mem["facts_enabled"] = bool(raw.get("facts_enabled", True))
+    mem["facts_auto"] = bool(raw.get("facts_auto", True))  # ② 自动总结开关（总开关的下一级）
     s = raw.get("summary")
     mem["summary"] = _parse_summary(s) if s is not None else None
     vec_cfg = raw.get("vector") if isinstance(raw.get("vector"), dict) else raw.get("vm")
@@ -526,9 +532,10 @@ def set_session_summary_config(username, sid, slice_rounds=None, auto_rounds=Non
 
 
 def set_session_memory_switches(username, sid, facts_enabled=None, summary_enabled=None,
-                                vector_enabled=None, reset_values=False):
+                                vector_enabled=None, reset_values=False, facts_auto=None):
     """批量设置记忆卡片开关（2/3/4 层），供「一键配置 / 关闭智能总结」与单卡开关调用。
 
+    facts_auto：② 动态事实的自动总结开关（总开关下一级），None=不更新。
     reset_values=True（一键配置）时把数值恢复默认：最近 N 轮=10、
     摘要切片/自动间隔、向量 TopK 与 recent_n 恢复默认。
     只更新传入的字段，其余保留。返回新 memory 或 None（会话不存在）。
@@ -538,6 +545,8 @@ def set_session_memory_switches(username, sid, facts_enabled=None, summary_enabl
         return None
     if facts_enabled is not None:
         memory["facts_enabled"] = bool(facts_enabled)
+    if facts_auto is not None:
+        memory["facts_auto"] = bool(facts_auto)
     if summary_enabled is not None:
         s = dict(memory.get("summary") or {})
         s["enabled"] = bool(summary_enabled)

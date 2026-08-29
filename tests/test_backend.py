@@ -526,6 +526,64 @@ class TestMemoryEngine(unittest.TestCase):
         self.assertIn("旧事实保留", texts)  # 增量合并，旧事实保留
         self.assertIn("新事实A", texts)
 
+    def test_facts_full_regen_preserves_locked(self):
+        """重新总结（full=True）：上锁条目原样保留（原 ts），未锁条目被重新生成替换。"""
+        storage.set_session_facts(self.username, self.sid, [
+            {"text": "主角叫小明", "ts": 123.0, "locked": True},
+            {"text": "过时的未锁事实", "ts": 456.0},
+        ])
+        for i in range(4):
+            storage.append_message(self.username, self.sid, "user", f"q{i}")
+            storage.append_message(self.username, self.sid, "assistant", f"a{i}")
+        with mock.patch("llm_client.chat", return_value="- 小美是女主角"):
+            new = memory_engine.extract_facts_for_session(
+                "fake-key", self.username, self.sid, None, full=True
+            )
+        by_text = {f["text"]: f for f in new}
+        # 上锁条目保留（原 ts + locked 标记）
+        self.assertIn("主角叫小明", by_text)
+        self.assertTrue(by_text["主角叫小明"]["locked"])
+        self.assertEqual(by_text["主角叫小明"]["ts"], 123.0)
+        # 未锁旧事实被重新生成结果替换
+        self.assertNotIn("过时的未锁事实", by_text)
+        self.assertIn("小美是女主角", by_text)
+
+    def test_extract_facts_incremental_preserves_locked(self):
+        """增量合并：上锁条目的 locked 标记不丢失。"""
+        old = [{"text": "主角叫小明", "ts": 123.0, "locked": True}]
+        with mock.patch("llm_client.chat", return_value="- 小明喜欢小美"):
+            new = memory_engine.extract_facts("fake-key", old, [{"role": "user", "content": "x"}])
+        by_text = {f["text"]: f for f in new}
+        self.assertTrue(by_text["主角叫小明"]["locked"])
+        self.assertEqual(by_text["主角叫小明"]["ts"], 123.0)
+
+    def test_extract_facts_auto_switch_gate(self):
+        """自动总结开关：auto=True（后台）受 facts_auto 门控；auto=False（手动）不受影响。"""
+        storage.set_session_memory_switches(self.username, self.sid, facts_auto=False)
+        for i in range(4):
+            storage.append_message(self.username, self.sid, "user", f"q{i}")
+            storage.append_message(self.username, self.sid, "assistant", f"a{i}")
+        # 后台自动触发：被 facts_auto 拦截
+        with mock.patch("llm_client.chat") as m:
+            r = memory_engine.extract_facts_for_session("fake-key", self.username, self.sid, None)
+            self.assertIsNone(r)
+            m.assert_not_called()
+        # 手动触发（facts-refresh / 一键刷新）：不受 facts_auto 影响
+        with mock.patch("llm_client.chat", return_value="- 手动抽出的事实"):
+            r = memory_engine.extract_facts_for_session(
+                "fake-key", self.username, self.sid, None, auto=False
+            )
+        self.assertIsNotNone(r)
+        self.assertIn("手动抽出的事实", [f["text"] for f in r])
+        # 卡片总开关仍然优先于一切
+        storage.set_session_memory_switches(self.username, self.sid, facts_enabled=False)
+        with mock.patch("llm_client.chat") as m:
+            r = memory_engine.extract_facts_for_session(
+                "fake-key", self.username, self.sid, None, auto=False
+            )
+            self.assertIsNone(r)
+            m.assert_not_called()
+
     def test_run_summary_idempotent(self):
         """无新内容时返回旧摘要，不重复调用 LLM。"""
         chat = self._msgs(6)
@@ -780,7 +838,59 @@ class TestAPI(unittest.TestCase):
         r = self.client.delete(f"/api/cards/{card['id']}")
         self.assertEqual(r.status_code, 200)
 
-    def test_facts_api(self):
+    def test_facts_item_api(self):
+        """关键事实条目级操作：增删改 / 上锁解锁，locked 持久化。"""
+        sid = self._new_session()
+        url = f"/api/sessions/{sid}/facts-item"
+        # add
+        r = self.client.post(url, json={"op": "add", "text": "主角叫小明"})
+        self.assertEqual(r.status_code, 200)
+        r = self.client.post(url, json={"op": "add", "text": "小美是女主角", "locked": True})
+        self.assertEqual(r.status_code, 200)
+        facts = r.get_json()["memory"]["facts"]
+        self.assertEqual([f["text"] for f in facts], ["主角叫小明", "小美是女主角"])
+        self.assertFalse(facts[0]["locked"])
+        self.assertTrue(facts[1]["locked"])
+        # lock：解锁第 0 条再上锁
+        r = self.client.post(url, json={"op": "lock", "index": 0, "locked": True})
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.get_json()["memory"]["facts"][0]["locked"])
+        # update
+        r = self.client.post(url, json={"op": "update", "index": 0, "text": "主角叫艾伦"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json()["memory"]["facts"][0]["text"], "主角叫艾伦")
+        # delete
+        r = self.client.post(url, json={"op": "delete", "index": 1})
+        self.assertEqual(r.status_code, 200)
+        facts = r.get_json()["memory"]["facts"]
+        self.assertEqual(len(facts), 1)
+        self.assertEqual(facts[0]["text"], "主角叫艾伦")
+        # 越界 / 空文本 / 未知操作
+        self.assertEqual(self.client.post(url, json={"op": "delete", "index": 9}).status_code, 400)
+        self.assertEqual(self.client.post(url, json={"op": "add", "text": "  "}).status_code, 400)
+        self.assertEqual(self.client.post(url, json={"op": "noop"}).status_code, 400)
+
+    def test_facts_auto_switch_api(self):
+        """facts_auto 开关：memory-switches API 持久化 + 默认开启。"""
+        sid = self._new_session()
+        # 默认开启
+        mem = storage.get_session_memory(self.username, sid)
+        self.assertTrue(mem["facts_auto"])
+        # 关闭
+        r = self.client.post(f"/api/sessions/{sid}/memory-switches", json={"facts_auto": False})
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(r.get_json()["memory"]["facts_auto"])
+        # 重新开启
+        r = self.client.post(f"/api/sessions/{sid}/memory-switches", json={"facts_auto": True})
+        self.assertTrue(r.get_json()["memory"]["facts_auto"])
+        # 与其他开关参数共存
+        r = self.client.post(f"/api/sessions/{sid}/memory-switches",
+                             json={"facts_auto": False, "facts_enabled": True})
+        self.assertFalse(r.get_json()["memory"]["facts_auto"])
+        self.assertTrue(r.get_json()["memory"]["facts_enabled"])
+
+    def test_facts_api_overwrite(self):
+        """整体覆盖 facts 接口：正常覆盖 + 非法 body 拒绝。"""
         sid = self._new_session()
         r = self.client.post(f"/api/sessions/{sid}/facts",
                              json={"facts": [{"text": "主角叫安娜"}]})

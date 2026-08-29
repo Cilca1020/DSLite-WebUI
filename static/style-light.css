@@ -625,11 +625,13 @@ body {
   transition: transform 0.2s;
 }
 .param-field .switch-row input[type="checkbox"]:checked + .switch-track,
-.memory-card-switch input[type="checkbox"]:checked + .switch-track {
+.memory-card-switch input[type="checkbox"]:checked + .switch-track,
+.memory-sub-switch input[type="checkbox"]:checked + .switch-track {
   background: var(--accent);
 }
 .param-field .switch-row input[type="checkbox"]:checked + .switch-track .switch-thumb,
-.memory-card-switch input[type="checkbox"]:checked + .switch-track .switch-thumb {
+.memory-card-switch input[type="checkbox"]:checked + .switch-track .switch-thumb,
+.memory-sub-switch input[type="checkbox"]:checked + .switch-track .switch-thumb {
   transform: translateX(20px);
 }
 
@@ -692,17 +694,6 @@ body {
 .settings-page .settings-body { flex: 1; min-height: 0; }
 
 /* 记忆页：层级卡片 */
-.memory-layer-tag {
-  float: right;
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-radius: 10px;
-  padding: 2px 8px;
-  margin-top: -2px;
-}
-/* 顶部批量操作按钮（一键配置 / 关闭智能总结） */
 .memory-master-bar {
   display: flex;
   gap: 8px;
@@ -721,13 +712,35 @@ body {
   justify-content: space-between;
   gap: 8px;
 }
+/* 子级开关行：左对齐，位于卡片总开关的下一级（如 ② 自动总结），大小与卡片开关一致 */
+.memory-sub-row {
+  display: flex;
+  justify-content: flex-start;
+  margin: -2px 0 2px;
+}
+.memory-sub-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  margin: 0;
+}
+.memory-sub-label {
+  font-size: 12px;
+  color: var(--text-sidebar-dim);
+}
+.memory-sub-switch input[type="checkbox"] { display: none; }
+/* 子级开关说明文字：单独一行位于按钮下方 */
+.memory-sub-hint {
+  display: block;
+  margin: 0 0 8px;
+}
 .memory-head-right {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   flex: none;
 }
-.memory-card-head .memory-layer-tag { float: none; margin-top: 0; }
 /* 卡片右上角开关：覆盖 .settings-group label 的纵向 flex 布局 */
 .memory-card-switch {
   display: inline-flex;
@@ -738,6 +751,7 @@ body {
   margin: 0;
 }
 .memory-card-switch input[type="checkbox"] { display: none; }
+.memory-sub-switch input[type="checkbox"] { display: none; }
 /* 卡片关闭态：整体置灰、内容不可编辑（右上角开关保持可点，用于重新打开） */
 .settings-group.memory-off { opacity: 0.6; }
 .settings-group.memory-off textarea,
@@ -753,6 +767,11 @@ body {
   opacity: 1;
   pointer-events: auto;
   cursor: pointer;
+}
+/* 卡片关闭态：子级开关（自动总结）一并禁用——总开关的下一级 */
+.settings-group.memory-off .memory-sub-switch {
+  pointer-events: none;
+  opacity: 0.5;
 }
 .memory-empty p {
   margin: 0;
@@ -794,7 +813,7 @@ body {
 }
 .memory-fact-row {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   padding: 7px 10px;
   border-radius: 6px;
@@ -812,6 +831,55 @@ body {
   color: var(--field-text);
   line-height: 1.5;
   word-break: break-word;
+}
+/* 事实条目：右侧操作按钮（上锁/编辑/删除） */
+.memory-fact-text { flex: 1; }
+.memory-fact-actions {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  opacity: 0.55;
+  transition: opacity 0.15s;
+}
+.memory-fact-row:hover .memory-fact-actions { opacity: 1; }
+.fact-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--field-text);
+  cursor: pointer;
+}
+.fact-icon-btn svg { width: 14px; height: 14px; }
+.fact-icon-btn:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+/* 上锁条目：主题色描边 + 锁定图标高亮 */
+.memory-fact-row.fact-locked { border-color: color-mix(in srgb, var(--accent) 55%, var(--input-border)); }
+.memory-fact-row.fact-locked .fact-icon-btn:first-child { color: var(--accent); opacity: 1; }
+/* 行内编辑输入框 */
+.memory-fact-edit {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  padding: 2px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--field-bg);
+  color: var(--field-text);
+}
+/* 手动添加事实行 */
+.memory-fact-add {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.memory-fact-add input {
+  flex: 1;
+  min-width: 0;
 }
 .memory-empty-text {
   margin: 0;
