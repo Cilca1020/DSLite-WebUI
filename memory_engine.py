@@ -1,0 +1,480 @@
+"""四层记忆引擎：核心设定卡 / 动态关键事实 / 剧情摘要 / 向量记忆。
+
+针对「角色扮演、剧情动态推进、关键设定不能忘」的场景，按优先级从高到低
+无条件或按需注入上下文：
+
+    [system prompt]
+    [① 核心设定卡]   用户导入（粘贴/文件），静态常驻，可跨会话复用
+    [② 动态关键事实] LLM 自动抽取 + 手动增删，随剧情增量更新（改名/恋爱等）
+    [③ 剧情摘要]     LLM 切片分段滚动总结，n（切片宽度）可调，自动+手动触发
+    [④ 向量检索片段] 按需召回对话细节（复用 vector_memory 机制）
+    [最近 N 轮对话]
+
+与 vector_memory 的关系：本模块持有 vector_memory 实例，负责第④层，
+并把四层按顺序拼成一份可直接喂给 LLM 的消息列表。
+
+设计原则：
+- 数据层读写统一走 storage 模块（sessions.memory 列 + character_cards 表）。
+- 记忆维护（事实抽取 / 切片总结 / 汇总）统一用固定轻量模型
+  config.MEMORY_MAINTENANCE_MODEL（默认 deepseek-chat），参考 auto-title 做法，
+  稳定且便宜；调用方（路由层）传入 api_key。
+- 所有 LLM 调用失败都不阻塞主对话：记录日志并优雅降级（跳过该层），
+  绝不因记忆维护失败而让用户的提问失败。
+"""
+
+import json
+import time
+
+import config
+import llm_client
+import storage
+import vector_memory
+
+# 各层在拼接消息时的 role
+# ① 核心设定卡 / ② 动态关键事实 / ③ 剧情摘要：用 system role（背景性内容，
+# 优先级高于对话）；④ 向量检索片段沿用其原始 role（user/assistant）。
+_CARD_ROLE = "system"
+_FACTS_ROLE = "system"
+_SUMMARY_ROLE = "system"
+
+
+# ------------------------- 四层读取 -------------------------
+
+def _get_memory(username, sid):
+    """读取会话四层记忆（规范化后的 dict）；会话不存在返回 None。"""
+    mem = storage.get_session_memory(username, sid)
+    return mem if mem is not None else None
+
+
+def _vector_enabled(memory, data, sid):
+    """判定第④层向量记忆是否启用。
+
+    优先级：请求参数 vector_memory（兼容旧前端开关）> 会话 memory.vector.enabled。
+    需带 session_id 才真正生效。
+    """
+    enabled = bool((memory or {}).get("vector", {}).get("enabled"))
+    if "vector_memory" in (data or {}):
+        enabled = bool((data or {}).get("vector_memory"))
+    return enabled and bool(sid)
+
+
+# ------------------------- 上下文拼接（核心） -------------------------
+
+def build_context(username, sid, user_messages, data=None, params=None, stored_msgs=None):
+    """按四层顺序拼接对话上下文，返回 [{role, content}, ...]（不含 system prompt 本身）。
+
+    参数：
+      username:      当前登录用户
+      sid:           会话 id（可为空；为空则退化为纯最近窗口截断）
+      user_messages: 前端传来的消息列表（[{role, content}]，不含 system）
+      data:          请求体（读取 vector_memory / vector_memory_model /
+                     vector_memory_recent_n 等向量相关参数）
+      params:        推理参数（用于关闭向量记忆时的字符预算）
+      stored_msgs:   可选，存储中的完整会话消息列表（供剧情总结判定 + 向量轮次展开）
+
+    返回：拼接后的消息列表。
+    """
+    memory = _get_memory(username, sid) if (username and sid) else None
+    chat = [
+        {"role": m.get("role"), "content": (m.get("content") or "").strip()}
+        for m in user_messages
+        if m.get("role") in ("user", "assistant") and (m.get("content") or "").strip()
+    ]
+    if not chat:
+        return []
+
+    layers = []
+
+    # ① 核心设定卡（无条件，优先级最高）
+    card = (memory or {}).get("card")
+    if card and str(card.get("content", "")).strip():
+        layers.append({"role": _CARD_ROLE, "content": _card_block(card)})
+
+    # ② 动态关键事实（无条件）
+    facts = (memory or {}).get("facts") or []
+    if facts:
+        layers.append({"role": _FACTS_ROLE, "content": _facts_block(facts)})
+
+    # ③ 剧情摘要（无条件）
+    summary = (memory or {}).get("summary")
+    if summary and str(summary.get("text", "")).strip():
+        layers.append({"role": _SUMMARY_ROLE, "content": _summary_block(summary)})
+
+    # ④ 向量检索片段（按需）+ 最近窗口
+    history = _build_history(chat, sid, data, params, stored_msgs, memory)
+
+    # 合并：① ② ③（背景层，system role）在前，④+最近窗口（对话层）在后
+    return layers + history
+
+
+def _card_block(card):
+    src = card.get("source", "paste")
+    label = {"paste": "用户导入", "file": "文件导入", "card_lib": "角色卡库"}.get(src, "用户导入")
+    return f"【核心设定（{label}，必须始终遵守）】\n{card.get('content', '')}"
+
+
+def _facts_block(facts):
+    lines = [f"- {f.get('text', '')}" for f in facts if str(f.get("text", "")).strip()]
+    return "【当前剧情中的关键事实（随剧情变化，请记住）】\n" + "\n".join(lines)
+
+
+def _summary_block(summary):
+    return f"【剧情摘要（截至目前的剧情进度）】\n{summary.get('text', '')}"
+
+
+def _build_history(chat, sid, data, params, stored_msgs, memory):
+    """第④层向量检索 + 最近窗口拼接。向量不可用/未启用时退化为纯最近窗口截断。"""
+    vec_cfg = (memory or {}).get("vector") or {}
+    enabled = _vector_enabled(memory, data, sid)
+    if not enabled or not sid:
+        return _truncate_long(chat, data.get("model") if data else None, params)
+    try:
+        vm = vector_memory.get_instance(
+            db_path=config.VECTOR_MEMORY_DB,
+            model_dir=_vm_model_dir(data),
+            device=config.VECTOR_MEMORY_DEVICE,
+            recent_n=config.VECTOR_MEMORY_RECENT_N,
+            top_k=config.VECTOR_MEMORY_TOP_K,
+            min_score=config.VECTOR_MEMORY_MIN_SCORE,
+        )
+    except vector_memory.VectorMemoryError:
+        # 向量记忆不可用：退化为纯最近窗口（不阻断对话）
+        return _truncate_long(chat, data.get("model") if data else None, params)
+
+    # 同步向量库（补新 + 删旧），以存储完整会话 + 本次请求为准
+    full = stored_msgs
+    try:
+        if full:
+            vm.reconcile_session(sid, list(full) + list(chat))
+        else:
+            vm.sync_session(sid, chat)
+    except Exception:  # noqa: BLE001
+        pass
+
+    query = next(
+        (m["content"] for m in reversed(chat) if m.get("role") == "user" and (m.get("content") or "").strip()),
+        "",
+    )
+    n_rounds = vec_cfg.get("recent_n") or config.VECTOR_MEMORY_RECENT_N
+    if data:
+        try:
+            n_rounds = int(data.get("vector_memory_recent_n") or n_rounds)
+        except (TypeError, ValueError):
+            pass
+    return vm.build_history(
+        chat,
+        session_id=sid,
+        query=query,
+        recent_rounds=n_rounds,
+        full_messages=full,
+        max_chars=config.NO_VM_MAX_CHARS,
+    )
+
+
+def _vm_model_dir(data):
+    vm_model = str((data or {}).get("vector_memory_model") or "").strip()
+    return os_join_models(vm_model) if vm_model else vector_memory.MODEL_DIR
+
+
+def os_join_models(vm_model):
+    import os
+    return os.path.join("models", vm_model)
+
+
+def _truncate_long(chat, model=None, params=None):
+    """向量记忆未启用/不可用时：按上下文窗口动态保留最近对话（只留最近部分）。"""
+    budget = config.NO_VM_MAX_CHARS
+    if params is None:
+        params = {}
+    window = config.MODEL_CONTEXT_WINDOW.get(model or "", config.NO_VM_DEFAULT_WINDOW)
+    max_tokens = int(params.get("max_tokens") or config.DEFAULT_PARAMS.get("max_tokens", 2048))
+    sys_tokens = len(params.get("system_prompt") or "") / config.CHARS_PER_TOKEN
+    avail_tokens = max(0, window - max_tokens - sys_tokens)
+    budget = int(avail_tokens * config.CHARS_PER_TOKEN * config.NO_VM_CONTEXT_RATIO)
+    out = list(chat)
+    while (sum(len(m["content"]) for m in out) > budget or len(out) > config.NO_VM_MAX_MESSAGES) and len(out) > 1:
+        out.pop(0)
+    return out
+
+
+# ------------------------- 记忆维护：动态关键事实 -------------------------
+
+_FACT_EXTRACT_SYS = (
+    "你是一个角色扮演剧情的记忆助手。请阅读用户与助手的对话片段，"
+    "从中抽取【必须长期记住的关键事实】。这类事实指：角色身份变化、称呼/改名、"
+    "人际关系变化（如恋爱、结仇、结盟）、关键剧情节点、重要专有名词与设定、"
+    "已经确认发生的重要事件。忽略临时性的寒暄、描述性细节、情绪化表达。\n"
+    "输出格式：每行一条，用「- 」开头，简洁陈述句。不要编号，不要解释，"
+    "不要输出任何其他内容。若没有值得记住的事实，输出「无」。"
+)
+
+_FACT_MERGE_SYS = (
+    "你是一个角色扮演剧情的记忆助手。下面给出【已有事实】和【本轮新增片段】。"
+    "请合并它们，产出一份更新后的关键事实清单：新增的事实加入，已有事实如有变化则更新，"
+    "已被剧情推翻的事实删除，重复项合并。保持每条简洁，用「- 」开头，每行一条。"
+    "只输出事实清单本身，不要解释，不要编号。"
+)
+
+
+def extract_facts(api_key, old_facts, new_messages):
+    """用 LLM 从新增对话片段抽取关键事实，并合并进旧事实列表。返回新事实列表。
+
+    任何失败都返回旧事实列表（优雅降级，不抛异常）。
+    """
+    old_text = "\n".join(f"- {f.get('text', '')}" for f in old_facts if str(f.get("text", "")).strip())
+    new_text = "\n".join(
+        f"{m.get('role')}: {m.get('content', '')}"
+        for m in new_messages
+        if m.get("role") in ("user", "assistant") and (m.get("content") or "").strip()
+    )
+    if not new_text.strip():
+        return old_facts
+    if old_text.strip():
+        user_msg = f"【已有事实】\n{old_text}\n\n【本轮新增片段】\n{new_text}"
+        sys_prompt = _FACT_MERGE_SYS
+    else:
+        user_msg = f"【对话片段】\n{new_text}"
+        sys_prompt = _FACT_EXTRACT_SYS
+    try:
+        raw = llm_client.chat(
+            api_key=api_key,
+            model=config.MEMORY_MAINTENANCE_MODEL,
+            messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": user_msg}],
+            temperature=0.2,
+            max_tokens=1024,
+            stream=False,
+        )
+    except (RuntimeError, ValueError, KeyError, IndexError):
+        return old_facts
+    lines = [l.strip().lstrip("-").strip() for l in str(raw or "").splitlines()]
+    new_facts = [l for l in lines if l and l != "无" and l != "暂无"][: config.FACT_MAX]
+    now = time.time()
+    merged = []
+    seen = set()
+    # 保留顺序：旧事实在前（未被推翻的），新事实追加（去重 + 上限）
+    for f in old_facts:
+        t = str(f.get("text", "")).strip()
+        key = t.lower()
+        if t and key not in seen and t not in new_facts:
+            seen.add(key)
+            merged.append({"text": t, "ts": f.get("ts", now)})
+    for t in new_facts:
+        key = t.lower()
+        if key not in seen:
+            seen.add(key)
+            merged.append({"text": t, "ts": now})
+    return merged[: config.FACT_MAX]
+
+
+# ------------------------- 记忆维护：剧情摘要 -------------------------
+
+_SUMMARY_SLICE_SYS = (
+    "你是一个角色扮演剧情的剧情摘要助手。请把下面的对话片段压缩成一段简洁的剧情摘要，"
+    "保留：当前发生的关键事件、人物关系/状态变化、剧情的推进方向、重要的设定与专有名词。"
+    "用第三人称、陈述句，控制在 200 字以内。只输出摘要正文，不要标题、不要解释。"
+)
+
+_SUMMARY_MERGE_SYS = (
+    "你是一个角色扮演剧情的剧情摘要助手。下面给出【旧摘要】和【新增剧情片段】，"
+    "请把它们合并成一份更新后的剧情摘要，保留剧情连续性与关键节点，"
+    "删除已被后续剧情覆盖的过时信息，控制在 500 字以内。"
+    "只输出摘要正文，不要标题、不要解释。"
+)
+
+
+def summarize_slice(api_key, slice_messages):
+    """把一段对话切片总结成摘要文本。失败返回空字符串（调用方降级）。"""
+    text = "\n".join(
+        f"{m.get('role')}: {m.get('content', '')}"
+        for m in slice_messages
+        if m.get("role") in ("user", "assistant") and (m.get("content") or "").strip()
+    )
+    if not text.strip():
+        return ""
+    try:
+        return str(llm_client.chat(
+            api_key=api_key,
+            model=config.MEMORY_MAINTENANCE_MODEL,
+            messages=[{"role": "system", "content": _SUMMARY_SLICE_SYS}, {"role": "user", "content": text}],
+            temperature=0.2,
+            max_tokens=1024,
+            stream=False,
+        ) or "").strip()
+    except (RuntimeError, ValueError, KeyError, IndexError):
+        return ""
+
+
+def merge_summary(api_key, old_summary, new_slices_text):
+    """把旧摘要与新增剧情片段合并成新摘要。失败返回 old_summary（降级）。"""
+    old = (old_summary or "").strip()
+    new = (new_slices_text or "").strip()
+    if not new:
+        return old
+    if not old:
+        return summarize_slice(api_key, [{"role": "user", "content": new}])
+    try:
+        return str(llm_client.chat(
+            api_key=api_key,
+            model=config.MEMORY_MAINTENANCE_MODEL,
+            messages=[{"role": "system", "content": _SUMMARY_MERGE_SYS},
+                      {"role": "user", "content": f"【旧摘要】\n{old}\n\n【新增剧情片段】\n{new}"}],
+            temperature=0.2,
+            max_tokens=2048,
+            stream=False,
+        ) or "").strip()
+    except (RuntimeError, ValueError, KeyError, IndexError):
+        return old
+
+
+def run_summary(api_key, username, sid, stored_msgs, slice_rounds=None):
+    """执行一次剧情总结：把「上次总结点之后」的对话切片，分段总结再合并进旧摘要。
+
+    增量策略：从上次总结到的轮次 last_round 之后开始切片，避免重复总结旧内容；
+    再把新切片摘要与旧摘要合并成一份更新的剧情摘要。
+
+    返回 {"ok": bool, "summary": str, "error": str}。
+    slice_rounds: 切片宽度（每次调用喂给模型的轮数）；None 用配置默认。
+    """
+    if not (username and sid):
+        return {"ok": False, "error": "缺少会话信息"}
+    memory = _get_memory(username, sid)
+    if memory is None:
+        return {"ok": False, "error": "会话不存在"}
+    stored = stored_msgs if stored_msgs is not None else (
+        storage.get_session(username, sid).get("messages", []) if storage.get_session(username, sid) else []
+    )
+    chat = [
+        {"role": m.get("role"), "content": (m.get("content") or "").strip()}
+        for m in stored
+        if m.get("role") in ("user", "assistant") and (m.get("content") or "").strip()
+    ]
+    if not chat:
+        return {"ok": False, "error": "没有可总结的对话"}
+    old_summary = (memory.get("summary") or {}).get("text", "")
+    last_round = int((memory.get("summary") or {}).get("last_round") or 0)
+    # 从上次总结点之后的消息开始（增量）
+    start_idx = _index_of_round(chat, last_round)
+    new_chat = chat[start_idx:]
+    if not new_chat:
+        return {"ok": True, "summary": old_summary}
+    # 切片宽度（轮数），上限给一个安全的经验值（如 200 轮），避免传超大整数
+    try:
+        slice_n = int(slice_rounds or config.SUMMARY_SLICE_ROUNDS)
+    except (TypeError, ValueError):
+        slice_n = config.SUMMARY_SLICE_ROUNDS
+    slice_n = max(1, min(slice_n, 200))
+    # 切片：每 slice_n 轮一块（一轮 = 一条 user + 紧随其后的 assistant）
+    slices = _slice_chat(new_chat, slice_n)
+    # 逐片总结
+    slice_texts = []
+    for s in slices:
+        st = summarize_slice(api_key, s)
+        if st:
+            slice_texts.append(st)
+    new_slices_text = "\n\n".join(slice_texts)
+    new_summary = merge_summary(api_key, old_summary, new_slices_text)
+    if not new_summary:
+        return {"ok": False, "error": "总结生成失败（LLM 不可用或返回空）"}
+    # 截断到上限
+    new_summary = new_summary[: config.SUMMARY_MAX_CHARS]
+    storage.set_session_summary(username, sid, new_summary, last_round=_count_rounds(chat))
+    return {"ok": True, "summary": new_summary}
+
+
+def _index_of_round(chat, round_count):
+    """返回「跳过前 round_count 轮（每轮 = 一条 user + 其后连续 assistant）」后的起点下标。
+
+    即第 round_count 轮完整结束（含其 assistant 回复）之后的下一条消息位置。
+    """
+    if round_count <= 0:
+        return 0
+    seen = 0
+    i = 0
+    while i < len(chat):
+        if chat[i]["role"] == "user":
+            seen += 1
+            if seen == round_count:
+                # 找到第 round_count 轮，跳到该轮结尾（跳过其后连续 assistant）
+                i += 1
+                while i < len(chat) and chat[i]["role"] == "assistant":
+                    i += 1
+                return i
+        i += 1
+    return len(chat)
+
+
+def _slice_chat(chat, round_slice):
+    """把消息列表按轮次切片：每块至多 round_slice 轮（一轮 = 一条 user + 其后 assistant）。"""
+    if round_slice <= 0:
+        round_slice = 1
+    # 找到每轮 user 的起始下标
+    user_idx = [i for i, m in enumerate(chat) if m["role"] == "user"]
+    if not user_idx:
+        # 无 user 消息，整块返回
+        return [chat]
+    slices = []
+    for k in range(0, len(user_idx), round_slice):
+        start = user_idx[k]
+        if k + round_slice < len(user_idx):
+            end = user_idx[k + round_slice]
+        else:
+            end = len(chat)
+        slices.append(chat[start:end])
+    return slices
+
+
+def _count_rounds(chat):
+    return sum(1 for m in chat if m["role"] == "user")
+
+
+def should_auto_summary(username, sid, stored_msgs=None):
+    """判断是否达到自动总结阈值（距上次总结新增轮数 >= SUMMARY_AUTO_ROUNDS）。
+
+    SUMMARY_AUTO_ROUNDS=0 表示关闭自动总结（仅手动）。
+    """
+    if config.SUMMARY_AUTO_ROUNDS <= 0:
+        return False
+    memory = _get_memory(username, sid)
+    if memory is None:
+        return False
+    stored = stored_msgs if stored_msgs is not None else (
+        storage.get_session(username, sid).get("messages", []) if storage.get_session(username, sid) else []
+    )
+    chat = [
+        m for m in stored
+        if m.get("role") in ("user", "assistant") and (m.get("content") or "").strip()
+    ]
+    total_rounds = _count_rounds(chat)
+    last_round = int((memory.get("summary") or {}).get("last_round") or 0)
+    return (total_rounds - last_round) >= config.SUMMARY_AUTO_ROUNDS
+
+
+def extract_facts_for_session(api_key, username, sid, stored_msgs):
+    """对会话做一次增量关键事实抽取：合并旧事实 + 最近对话片段，落库并返回新事实列表。
+
+    失败返回 None（优雅降级，不阻塞主对话）。由调用方决定触发频率。
+    """
+    if not (username and sid):
+        return None
+    memory = _get_memory(username, sid)
+    if memory is None:
+        return None
+    stored = stored_msgs if stored_msgs is not None else (
+        storage.get_session(username, sid).get("messages", []) if storage.get_session(username, sid) else []
+    )
+    chat = [
+        m for m in stored
+        if m.get("role") in ("user", "assistant") and (m.get("content") or "").strip()
+    ]
+    if not chat:
+        return None
+    facts = memory.get("facts") or []
+    # 喂给 LLM 的片段：最近若干条（覆盖自上次抽取以来的新内容）
+    recent = chat[- max(config.FACT_EXTRACT_EVERY * 2, 6):]
+    new_facts = extract_facts(api_key, facts, recent)
+    if not new_facts:
+        return None
+    if [f.get("text") for f in new_facts] != [f.get("text") for f in facts]:
+        storage.set_session_facts(username, sid, new_facts)
+        return new_facts
+    return None

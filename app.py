@@ -27,6 +27,7 @@ import random
 import re
 import secrets
 import string
+import sys
 from datetime import timedelta
 
 from flask import Flask, Response, jsonify, request, send_from_directory, session
@@ -35,6 +36,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 import config
 import llm_client
+import memory_engine
 import storage
 import vector_memory
 
@@ -319,69 +321,24 @@ def _truncate_long(user_messages, model=None, params=None):
 
 
 def _build_chat_context(user_messages, sid, data, username=None, params=None):
-    """拼接发给模型的对话上下文。
+    """拼接发给模型的对话上下文（四层记忆引擎）。
 
-    - 向量记忆开启（请求参数 vector_memory=true，需带 session_id 与已选向量化模型）：
-      先把会话消息增量索引到向量库，再返回「最近 N 条 + 向量检索 Top-K」。
-      模型加载失败抛 VectorMemoryError，由调用方转成错误响应（不静默忽略）。
-    - 关闭 / 无 session_id：原样透传，但对话过长时砍掉过早的消息。
+    - ① 核心设定卡 / ② 动态关键事实 / ③ 剧情摘要：无条件常驻（会话 memory 列）。
+    - ④ 向量记忆：按需召回细节（沿用旧前端 vector_memory 开关参数，兼容阶段二前的前端）。
+    - 关闭 / 无 session_id：退化为纯最近窗口截断。
     """
-    enabled = config.VECTOR_MEMORY_ENABLED
-    if "vector_memory" in data:
-        enabled = bool(data.get("vector_memory"))
-
-    if not enabled or not sid:
-        return _truncate_long(user_messages, data.get("model"), params)
-
-    model_dir = None
-    vm_model = str(data.get("vector_memory_model") or "").strip()
-    if vm_model:
-        model_dir = os.path.join("models", vm_model)
-
-    vm = vector_memory.get_instance(
-        db_path=config.VECTOR_MEMORY_DB,
-        model_dir=model_dir or vector_memory.MODEL_DIR,
-        device=config.VECTOR_MEMORY_DEVICE,
-        recent_n=config.VECTOR_MEMORY_RECENT_N,
-        top_k=config.VECTOR_MEMORY_TOP_K,
-        min_score=config.VECTOR_MEMORY_MIN_SCORE,
-    )
-    # 双向同步（补新 + 删旧）：以「存储中的完整会话 + 本次请求消息」为准，
-    # 确保 ①前端只发送分页时早期消息也能被索引；②被编辑/重试/删除的消息
-    # 不再残留在向量库中被检索进新上下文。
     stored_msgs = None
     if username and sid:
         stored = storage.get_session(username, sid)
         if stored:
             stored_msgs = stored["messages"]
-            vm.reconcile_session(sid, list(stored_msgs) + list(user_messages))
-        else:
-            vm.sync_session(sid, user_messages)
-    else:
-        vm.sync_session(sid, user_messages)
-    # 检索查询取最后一条 user 消息（当前提问）
-    query = next(
-        (
-            m["content"]
-            for m in reversed(user_messages)
-            if m.get("role") == "user" and (m.get("content") or "").strip()
-        ),
-        "",
-    )
-    # N 为用户自定义的「最近 N 轮对话」（一轮 = 一次提问 + 一次回答），
-    # 不得超过当前会话总轮数；由 build_history 内部换算成消息条数。
-    n_rounds = config.VECTOR_MEMORY_RECENT_N
-    try:
-        n_rounds = int(data.get("vector_memory_recent_n") or n_rounds)
-    except (TypeError, ValueError):
-        pass
-    return vm.build_history(
+    return memory_engine.build_context(
+        username,
+        sid,
         user_messages,
-        session_id=sid,
-        query=query,
-        recent_rounds=n_rounds,
-        full_messages=stored_msgs,
-        max_chars=config.NO_VM_MAX_CHARS,
+        data=data,
+        params=params,
+        stored_msgs=stored_msgs,
     )
 
 
@@ -410,6 +367,12 @@ def api_chat():
         return jsonify({"error": f"向量记忆不可用：{e}", "vector_memory_error": True}), 502
     messages = [{"role": "system", "content": params["system_prompt"]}] + context
 
+    # 调试日志：打印实际发给 LLM 的完整上下文（含四层记忆注入），方便边跑边验证
+    try:
+        _log_context(sid, messages)
+    except Exception:  # noqa: BLE001
+        pass
+
     # 流式响应：用 text/event-stream 把每个片段推给前端
     def generate():
         try:
@@ -428,8 +391,183 @@ def api_chat():
                 yield piece
         except RuntimeError as e:
             yield f"\n[错误] {e}"
+        finally:
+            # 流式结束后触发记忆维护（后台，不阻塞响应收尾）：
+            # ① 动态关键事实抽取（每次对话后增量尝试）② 剧情摘要（达到阈值自动总结）
+            if sid and session.get("username"):
+                try:
+                    _run_memory_maintenance(api_key, sid)
+                except Exception:  # noqa: BLE001
+                    app.logger.exception("记忆维护失败")
 
     return Response(generate(), mimetype="text/plain; charset=utf-8")
+
+
+def _run_memory_maintenance(api_key, sid):
+    """对话结束后触发记忆维护：事实抽取 + 自动剧情总结。异常在调用方捕获。"""
+    username = session["username"]
+    stored = storage.get_session(username, sid)
+    stored_msgs = stored["messages"] if stored else []
+    # ① 动态关键事实：每次对话后增量抽取（失败不阻塞）
+    try:
+        memory_engine.extract_facts_for_session(api_key, username, sid, stored_msgs)
+    except Exception:  # noqa: BLE001
+        app.logger.exception("动态关键事实抽取失败")
+    # ② 剧情摘要：达到阈值自动总结
+    try:
+        if memory_engine.should_auto_summary(username, sid, stored_msgs):
+            memory_engine.run_summary(api_key, username, sid, stored_msgs)
+    except Exception:  # noqa: BLE001
+        app.logger.exception("剧情摘要自动总结失败")
+
+
+def _log_context(sid, messages):
+    """把实际发给 LLM 的完整上下文打印到控制台，便于观察四层记忆注入效果。"""
+    total_chars = sum(len(m.get("content", "")) for m in messages)
+    print("\n" + "=" * 72, flush=True)
+    print(f"[上下文] session={sid or '-'} 共 {len(messages)} 条，总字符 {total_chars}", flush=True)
+    print("-" * 72, flush=True)
+    for i, m in enumerate(messages):
+        role = str(m.get("role", "?")).ljust(9)
+        content = m.get("content", "")
+        # 标记记忆层（system 里的背景性内容）
+        tag = ""
+        if content.startswith("【核心设定"):
+            tag = " [①核心设定卡]"
+        elif content.startswith("【当前剧情中的关键事实"):
+            tag = " [②动态关键事实]"
+        elif content.startswith("【剧情摘要"):
+            tag = " [③剧情摘要]"
+        # 每条只打印前 200 字，避免超长会话刷屏；完整内容按需自行查看数据库
+        snippet = content.replace("\n", " / ")[:200]
+        print(f"  {i:>2} [{role}]{tag} {snippet}{'...' if len(content) > 200 else ''}", flush=True)
+    print("=" * 72, flush=True)
+
+
+# ------------------------- 四层记忆 API -------------------------
+
+@app.route("/api/sessions/<sid>/memory", methods=["GET", "POST"])
+def api_session_memory(sid):
+    """读取 / 整体覆盖会话的四层记忆结构。"""
+    username = session["username"]
+    if request.method == "GET":
+        mem = storage.get_session_memory(username, sid)
+        if mem is None:
+            return jsonify({"error": "会话不存在"}), 404
+        return jsonify({"memory": mem})
+    data = request.get_json(force=True, silent=True) or {}
+    saved = storage.save_session_memory(username, sid, data.get("memory"))
+    if saved is None:
+        return jsonify({"error": "会话不存在"}), 404
+    return jsonify({"memory": saved["memory"]})
+
+
+@app.route("/api/sessions/<sid>/card", methods=["POST"])
+def api_set_card(sid):
+    """写入核心设定卡。body: {"content": "...", "source": "paste|file|card_lib"}。"""
+    username = session["username"]
+    data = request.get_json(force=True, silent=True) or {}
+    content = str(data.get("content") or "")
+    source = str(data.get("source") or "paste")
+    mem = storage.set_session_card(username, sid, content, source=source)
+    if mem is None:
+        return jsonify({"error": "会话不存在"}), 404
+    return jsonify({"memory": mem})
+
+
+@app.route("/api/sessions/<sid>/card-lib", methods=["POST"])
+def api_apply_card_lib(sid):
+    """从角色卡库应用一张卡到本会话。body: {"card_id": "..."}。"""
+    username = session["username"]
+    data = request.get_json(force=True, silent=True) or {}
+    card_id = str(data.get("card_id") or "")
+    card = storage.get_character_card(card_id)
+    if not card:
+        return jsonify({"error": "角色卡不存在"}), 404
+    mem = storage.set_session_card(username, sid, card["content"], source="card_lib")
+    if mem is None:
+        return jsonify({"error": "会话不存在"}), 404
+    return jsonify({"memory": mem})
+
+
+@app.route("/api/sessions/<sid>/facts", methods=["POST"])
+def api_set_facts(sid):
+    """整体覆盖动态关键事实。body: {"facts": [{"text": "...", "ts": ...}]}。"""
+    username = session["username"]
+    data = request.get_json(force=True, silent=True) or {}
+    facts = data.get("facts")
+    if not isinstance(facts, list):
+        return jsonify({"error": "facts 需为数组"}), 400
+    mem = storage.set_session_facts(username, sid, facts)
+    if mem is None:
+        return jsonify({"error": "会话不存在"}), 404
+    return jsonify({"memory": mem})
+
+
+@app.route("/api/sessions/<sid>/summary", methods=["POST"])
+def api_run_summary(sid):
+    """手动触发一次剧情总结。body: {"slice_rounds": int}。"""
+    username = session["username"]
+    data = request.get_json(force=True, silent=True) or {}
+    api_key = str(data.get("api_key") or "").strip()
+    if not api_key:
+        return jsonify({"error": "缺少 api_key"}), 400
+    stored = storage.get_session(username, sid)
+    if not stored:
+        return jsonify({"error": "会话不存在"}), 404
+    slice_rounds = data.get("slice_rounds")
+    try:
+        slice_rounds = int(slice_rounds) if slice_rounds else None
+    except (TypeError, ValueError):
+        slice_rounds = None
+    result = memory_engine.run_summary(
+        api_key, username, sid, stored["messages"], slice_rounds=slice_rounds
+    )
+    if not result["ok"]:
+        return jsonify({"error": result.get("error", "总结失败")}), 502
+    return jsonify(result)
+
+
+@app.route("/api/sessions/<sid>/facts-refresh", methods=["POST"])
+def api_refresh_facts(sid):
+    """手动触发一次动态关键事实抽取。body: {"api_key": "..."}。"""
+    username = session["username"]
+    data = request.get_json(force=True, silent=True) or {}
+    api_key = str(data.get("api_key") or "").strip()
+    if not api_key:
+        return jsonify({"error": "缺少 api_key"}), 400
+    stored = storage.get_session(username, sid)
+    if not stored:
+        return jsonify({"error": "会话不存在"}), 404
+    new_facts = memory_engine.extract_facts_for_session(
+        api_key, username, sid, stored["messages"]
+    )
+    if new_facts is None:
+        return jsonify({"error": "抽取失败或没有新增事实"}), 502
+    return jsonify({"facts": new_facts})
+
+
+# ------------------------- 角色卡库 API（跨会话复用） -------------------------
+
+@app.route("/api/cards", methods=["GET"])
+def api_list_cards():
+    return jsonify({"cards": storage.list_character_cards(session["username"])})
+
+
+@app.route("/api/cards", methods=["POST"])
+def api_save_card():
+    data = request.get_json(force=True, silent=True) or {}
+    name = str(data.get("name") or "")
+    content = str(data.get("content") or "")
+    card_id = str(data.get("card_id") or "") or None
+    card = storage.save_character_card(name, content, card_id=card_id)
+    return jsonify(card)
+
+
+@app.route("/api/cards/<card_id>", methods=["DELETE"])
+def api_delete_card(card_id):
+    storage.delete_character_card(card_id)
+    return jsonify({"ok": True})
 
 
 # ------------------------- 会话管理 -------------------------
@@ -458,6 +596,7 @@ def api_update_session_config(sid):
         model=data.get("model"),
         params=data.get("params"),
         vm=data.get("vm"),
+        memory=data.get("memory"),
     )
     if saved_session is None:
         return jsonify({"error": "会话不存在"}), 404
@@ -639,6 +778,13 @@ def api_delete_preset(name):
 
 
 if __name__ == "__main__":
+    # Windows 控制台默认 GBK，重配置为 UTF-8，保证上下文日志里的中文/特殊字符正常打印
+    if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:  # noqa: BLE001
+            pass
     # 生产环境使用 waitress（支持 Windows 的多线程 WSGI 服务器）。
     # 关闭 debug 重载器：waitress 不支持 werkzeug 的 reloader。
     from waitress import serve

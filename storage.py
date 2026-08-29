@@ -51,6 +51,13 @@ def _init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_sessions_user_updated
                 ON sessions(username, updated_at DESC);
+            CREATE TABLE IF NOT EXISTS character_cards (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            );
         """)
         columns = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
         if "auto_title_generated" not in columns:
@@ -58,9 +65,66 @@ def _init_db():
         if "vm" not in columns:
             # 向量记忆设置（每会话独立，JSON: {"enabled": bool, "model": str, "recent_n": int}）
             conn.execute("ALTER TABLE sessions ADD COLUMN vm TEXT")
+        if "memory" not in columns:
+            # 四层记忆（每会话独立，JSON）：card(核心设定卡) / facts(动态关键事实) /
+            # summary(剧情摘要) / vector(向量记忆设置，迁移自旧 vm 字段)
+            conn.execute("ALTER TABLE sessions ADD COLUMN memory TEXT")
+            # 老会话：把已有的 vm 迁移进 memory.vector，避免新面板丢配置
+            _migrate_vm_to_memory(conn)
 
 
-_init_db()
+def _migrate_vm_to_memory(conn):
+    """把已有的 vm 字段迁移进 memory.vector（老会话数据兼容，不丢配置）。"""
+    rows = conn.execute(
+        "SELECT id, vm FROM sessions WHERE vm IS NOT NULL AND vm != '' AND "
+        "(memory IS NULL OR memory = '')"
+    ).fetchall()
+    for row in rows:
+        try:
+            vm = json.loads(row["vm"])
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(vm, dict):
+            continue
+        memory = {"card": None, "facts": [], "summary": None, "vector": _parse_vm(vm)}
+        conn.execute(
+            "UPDATE sessions SET memory = ? WHERE id = ?",
+            (json.dumps(memory, ensure_ascii=False), row["id"]),
+        )
+
+
+def _default_memory():
+    """会话四层记忆的默认结构。"""
+    return {
+        "card": None,      # 核心设定卡 {"content","source","updated_at"}
+        "facts": [],       # 动态关键事实 [{"text","ts"}]
+        "summary": None,   # 剧情摘要 {"text","summarized_ts","last_round"}
+        "vector": _parse_vm(None),  # 向量记忆设置（迁移自旧 vm）
+    }
+
+
+def _parse_memory(raw):
+    """规范化四层记忆结构。接收 dict 或 JSON 字符串或 None；缺省返回默认结构。"""
+    mem = _default_memory()
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError):
+            return mem
+    if not isinstance(raw, dict):
+        return mem
+    mem["card"] = raw.get("card") if isinstance(raw.get("card"), dict) else None
+    if not isinstance(raw.get("facts"), list):
+        mem["facts"] = []
+    else:
+        mem["facts"] = [
+            {"text": f.get("text", ""), "ts": float(f.get("ts", 0))}
+            for f in raw["facts"] if isinstance(f, dict) and str(f.get("text", "")).strip()
+        ]
+    s = raw.get("summary")
+    mem["summary"] = s if isinstance(s, dict) else None
+    mem["vector"] = _parse_vm(raw.get("vector")) if isinstance(raw.get("vector"), dict) else _parse_vm(raw.get("vm"))
+    return mem
 
 
 def _new_id():
@@ -160,25 +224,31 @@ def _parse_vm(raw):
 
 
 def _row_to_session(row):
+    memory = _parse_memory(row["memory"] if "memory" in row.keys() else None)
     return {"id": row["id"], "title": row["title"], "created_at": row["created_at"],
             "updated_at": row["updated_at"], "model": row["model"],
             "params": json.loads(row["params"]) if row["params"] else None,
-            "vm": _parse_vm(row["vm"]),
+            "vm": memory["vector"],   # 兼容旧前端：vm 从 memory.vector 权威读取
+            "memory": memory,
             "messages": json.loads(row["messages"])}
 
 
-def create_session(username, title=None, model=None, params=None, vm=None):
+def create_session(username, title=None, model=None, params=None, vm=None, memory=None):
     now = time.time()
+    mem = _parse_memory(memory) if memory is not None else _default_memory()
+    if vm is not None:
+        mem["vector"] = _parse_vm(vm)
     session = {"id": _new_id(), "title": title or "会话 " + time.strftime("%m-%d %H:%M"),
                "created_at": now, "updated_at": now, "model": model, "params": params,
-               "vm": _parse_vm(vm), "messages": []}
+               "vm": mem["vector"], "memory": mem, "messages": []}
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO sessions(id, username, title, created_at, updated_at, model, params, messages, vm) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO sessions(id, username, title, created_at, updated_at, model, params, messages, vm, memory) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (session["id"], username, session["title"], now, now, model,
              json.dumps(params, ensure_ascii=False), json.dumps([]),
-             json.dumps(session["vm"], ensure_ascii=False)),
+             json.dumps(session["vm"], ensure_ascii=False),
+             json.dumps(mem, ensure_ascii=False)),
         )
     return session
 
@@ -227,13 +297,16 @@ def get_session_messages(username, sid, limit=30, before=None):
 
 
 def _save_session(username, session):
+    memory = _parse_memory(session.get("memory"))
+    vm = memory["vector"]
     with _connect() as conn:
         conn.execute(
-            "UPDATE sessions SET title = ?, updated_at = ?, model = ?, params = ?, messages = ?, vm = ? WHERE id = ? AND username = ?",
+            "UPDATE sessions SET title = ?, updated_at = ?, model = ?, params = ?, messages = ?, vm = ?, memory = ? WHERE id = ? AND username = ?",
             (session["title"], session.get("updated_at", time.time()), session.get("model"),
              json.dumps(session.get("params"), ensure_ascii=False),
              json.dumps(session.get("messages", []), ensure_ascii=False),
-             json.dumps(session.get("vm", _parse_vm(None)), ensure_ascii=False),
+             json.dumps(vm, ensure_ascii=False),
+             json.dumps(memory, ensure_ascii=False),
              session["id"], username),
         )
 
@@ -263,7 +336,7 @@ def auto_title_status(username, sid):
     return {"title": row["title"], "generated": bool(row["auto_title_generated"])}
 
 
-def update_session_config(username, sid, model=None, params=None, vm=None):
+def update_session_config(username, sid, model=None, params=None, vm=None, memory=None):
     session = get_session(username, sid)
     if session is None:
         return None
@@ -272,9 +345,125 @@ def update_session_config(username, sid, model=None, params=None, vm=None):
     if params is not None:
         session["params"] = params
     if vm is not None:
-        session["vm"] = _parse_vm(vm)
+        session["memory"]["vector"] = _parse_vm(vm)
+    if memory is not None:
+        session["memory"] = _parse_memory(memory)
     _save_session(username, session)
     return session
+
+
+# ------------------------- 四层记忆读写（memory 列） -------------------------
+
+def get_session_memory(username, sid):
+    """读取会话的四层记忆结构；会话不存在返回 None。"""
+    session = get_session(username, sid)
+    return session["memory"] if session else None
+
+
+def save_session_memory(username, sid, memory):
+    """整体覆盖会话的四层记忆（规范化后落库），返回新会话或 None。"""
+    session = get_session(username, sid)
+    if session is None:
+        return None
+    session["memory"] = _parse_memory(memory)
+    _save_session(username, session)
+    return session
+
+
+def set_session_card(username, sid, content, source="paste"):
+    """写入核心设定卡。content 为空则清除该层。返回新 memory 结构或 None。"""
+    memory = get_session_memory(username, sid)
+    if memory is None:
+        return None
+    content = (content or "").strip()
+    memory["card"] = {"content": content, "source": source, "updated_at": time.time()} if content else None
+    save_session_memory(username, sid, memory)
+    return memory
+
+
+def set_session_facts(username, sid, facts):
+    """整体覆盖动态关键事实列表。facts 为 [{"text", ...}]，规范化后落库。返回新 memory 或 None。"""
+    memory = get_session_memory(username, sid)
+    if memory is None:
+        return None
+    memory["facts"] = _parse_memory({"facts": facts, "card": None, "summary": None, "vector": memory["vector"]})["facts"]
+    save_session_memory(username, sid, memory)
+    return memory
+
+
+def set_session_summary(username, sid, text, last_round=None):
+    """写入剧情摘要。text 为空则清除。last_round 为已总结到的对话轮次（计数）。返回新 memory 或 None。"""
+    memory = get_session_memory(username, sid)
+    if memory is None:
+        return None
+    text = (text or "").strip()
+    if text:
+        memory["summary"] = {"text": text, "summarized_ts": time.time(),
+                             "last_round": last_round if last_round is not None else memory.get("summary", {}).get("last_round")}
+    else:
+        memory["summary"] = None
+    save_session_memory(username, sid, memory)
+    return memory
+
+
+def clear_session_memory_layer(username, sid, layer):
+    """清空某一层记忆（card / facts / summary），vector 为配置不清。返回新 memory 或 None。"""
+    memory = get_session_memory(username, sid)
+    if memory is None:
+        return None
+    if layer in ("card", "facts", "summary"):
+        memory[layer] = [] if layer == "facts" else None
+        save_session_memory(username, sid, memory)
+    return memory
+
+
+# ------------------------- 角色卡库（跨会话复用） -------------------------
+
+def list_character_cards(username):
+    """列出用户可用的角色卡（按更新时间倒序）。"""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id, name, content, created_at, updated_at FROM character_cards ORDER BY updated_at DESC"
+        ).fetchall()
+    return [{"id": r["id"], "name": r["name"], "content": r["content"],
+             "created_at": r["created_at"], "updated_at": r["updated_at"]} for r in rows]
+
+
+def get_character_card(card_id):
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT id, name, content, created_at, updated_at FROM character_cards WHERE id = ?",
+            (card_id,),
+        ).fetchone()
+    return {"id": row["id"], "name": row["name"], "content": row["content"],
+            "created_at": row["created_at"], "updated_at": row["updated_at"]} if row else None
+
+
+def save_character_card(name, content, card_id=None):
+    """保存/更新角色卡。card_id 为空则新建。返回角色卡 dict。"""
+    now = time.time()
+    name = (name or "").strip()[:50] or "未命名角色卡"
+    content = (content or "").strip()
+    with _connect() as conn:
+        if card_id:
+            conn.execute(
+                "UPDATE character_cards SET name = ?, content = ?, updated_at = ? WHERE id = ?",
+                (name, content, now, card_id),
+            )
+        else:
+            cid = _new_id()
+            conn.execute(
+                "INSERT INTO character_cards(id, name, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                (cid, name, content, now, now),
+            )
+            return {"id": cid, "name": name, "content": content, "created_at": now, "updated_at": now}
+    # 退出 with 后 UPDATE 已 commit，再查询确保读到新值
+    return get_character_card(card_id) if card_id else None
+
+
+def delete_character_card(card_id):
+    with _connect() as conn:
+        conn.execute("DELETE FROM character_cards WHERE id = ?", (card_id,))
 
 
 def import_session(username, data):
@@ -292,6 +481,9 @@ def import_session(username, data):
         updated_at = created_at
     title = data.get("title") or "会话 " + time.strftime("%m-%d %H:%M")
     messages = [m for m in (data.get("messages") or []) if m.get("role") in ("user", "assistant")]
+    mem = _parse_memory(data.get("memory"))
+    if data.get("vm") is not None:
+        mem["vector"] = _parse_vm(data.get("vm"))
     session = {
         "id": _new_id(),
         "title": title,
@@ -299,17 +491,19 @@ def import_session(username, data):
         "updated_at": updated_at,
         "model": data.get("model"),
         "params": data.get("params"),
-        "vm": _parse_vm(data.get("vm")),
+        "vm": mem["vector"],
+        "memory": mem,
         "messages": messages,
     }
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO sessions(id, username, title, created_at, updated_at, model, params, messages, vm) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO sessions(id, username, title, created_at, updated_at, model, params, messages, vm, memory) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (session["id"], username, title, created_at, updated_at, session["model"],
              json.dumps(session["params"], ensure_ascii=False),
              json.dumps(messages, ensure_ascii=False),
-             json.dumps(session["vm"], ensure_ascii=False)),
+             json.dumps(session["vm"], ensure_ascii=False),
+             json.dumps(mem, ensure_ascii=False)),
         )
     return session
 
@@ -421,3 +615,7 @@ def save_preset(name, params):
 
 def delete_preset(name):
     _write_presets([preset for preset in _read_presets() if preset["name"] != name])
+
+
+# 所有辅助函数定义完毕后再初始化数据库（含旧 vm -> memory.vector 迁移）
+_init_db()
