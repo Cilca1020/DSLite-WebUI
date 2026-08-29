@@ -811,6 +811,101 @@ body {
   gap: 6px;
   padding: 2px;
 }
+/* 人物卡：多角色卡列表 + 编辑器 */
+.memory-cards-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 0;
+}
+.memory-card-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border: 1px solid var(--input-border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--field-bg) 94%, var(--accent));
+  cursor: pointer;
+  max-width: 100%;
+}
+.memory-card-item:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--input-border)); }
+.memory-card-item.selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--field-bg));
+}
+.memory-card-item-name {
+  font-size: 12px;
+  color: var(--field-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+.memory-card-item.selected .memory-card-item-name { color: var(--accent); font-weight: 600; }
+.memory-card-item-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  margin-left: -2px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text-sidebar-dim);
+  cursor: pointer;
+}
+.memory-card-item-del:hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+/* 新建入口：虚线胶囊，始终排在列表最右侧 */
+.memory-card-item-new {
+  border-style: dashed;
+  background: transparent;
+  color: var(--text-sidebar-dim);
+  font-family: inherit;
+  gap: 4px;
+}
+.memory-card-item-new:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.memory-card-item-new .memory-card-item-name { color: inherit; font-weight: 500; }
+.memory-card-item-plus {
+  font-size: 14px;
+  line-height: 1;
+}
+.memory-cards-empty {
+  font-size: 12px;
+  color: var(--text-sidebar-dim);
+  padding: 2px 0;
+}
+.memory-card-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+}
+.memory-card-editor input {
+  padding: 7px 9px;
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  background: var(--field-bg);
+  color: var(--field-text);
+}
+.memory-card-editor input:disabled,
+.memory-card-editor textarea:disabled {
+  color: var(--text-sidebar-dim);
+  background: rgba(128, 128, 128, 0.1);
+  cursor: not-allowed;
+}
 .memory-fact-row {
   display: flex;
   align-items: center;
@@ -906,7 +1001,7 @@ body {
   margin: 0 !important;
 }
 .memory-num-field input {
-  width: 64px;
+  width: 80px;
   padding: 6px 8px;
   border: 1px solid var(--input-border);
   border-radius: 6px;
@@ -914,6 +1009,10 @@ body {
   font-family: inherit;
   background: var(--field-bg);
   color: var(--field-text);
+}
+/* 记忆面板数值输入统一短款（覆盖 .param-field input 的 width:100%） */
+#settingsPageMemory .param-field input[type="number"] {
+  width: 80px;
 }
 /* 数值输入禁用态（如摘要「自动总结」关闭时的切片轮数/自动间隔）：置灰不可编辑 */
 .memory-num-field input:disabled {

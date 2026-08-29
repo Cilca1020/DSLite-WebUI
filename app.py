@@ -478,7 +478,7 @@ def _log_context(sid, messages):
             cur = "vector"
         elif src == "recent":
             cur = "recent"
-        elif content.startswith("【核心设定"):
+        elif content.startswith("【核心设定") or content.startswith("【角色设定"):
             cur = "card"
         elif content.startswith("【当前剧情中的关键事实"):
             cur = "facts"
@@ -534,29 +534,25 @@ def api_session_memory(sid):
     return jsonify({"memory": saved["memory"]})
 
 
-@app.route("/api/sessions/<sid>/card", methods=["POST"])
-def api_set_card(sid):
-    """写入核心设定卡。body: {"content": "...", "source": "paste|file|card_lib"}。"""
+@app.route("/api/sessions/<sid>/cards-item", methods=["POST"])
+def api_cards_item(sid):
+    """人物卡列表条目操作（多角色，一角色一卡）。
+
+    body: {"op": "add|update|delete", "id": "...", "name": "...", "content": "..."}
+    add：新建卡（name/content 可为空）；update：按 id 更新 name/content（传哪个更新哪个）；
+    delete：按 id 删除。返回完整 memory。
+    """
     username = session["username"]
     data = request.get_json(force=True, silent=True) or {}
-    content = str(data.get("content") or "")
-    source = str(data.get("source") or "paste")
-    mem = storage.set_session_card(username, sid, content, source=source)
-    if mem is None:
-        return jsonify({"error": "会话不存在"}), 404
-    return jsonify({"memory": mem})
-
-
-@app.route("/api/sessions/<sid>/card-lib", methods=["POST"])
-def api_apply_card_lib(sid):
-    """从角色卡库应用一张卡到本会话。body: {"card_id": "..."}。"""
-    username = session["username"]
-    data = request.get_json(force=True, silent=True) or {}
-    card_id = str(data.get("card_id") or "")
-    card = storage.get_character_card(card_id)
-    if not card:
-        return jsonify({"error": "角色卡不存在"}), 404
-    mem = storage.set_session_card(username, sid, card["content"], source="card_lib")
+    op = str(data.get("op") or "")
+    if op not in ("add", "update", "delete"):
+        return jsonify({"error": "无效操作"}), 400
+    mem = storage.set_session_cards_item(
+        username, sid, op,
+        card_id=str(data.get("id") or "") or None,
+        name=data.get("name"),
+        content=data.get("content"),
+    )
     if mem is None:
         return jsonify({"error": "会话不存在"}), 404
     return jsonify({"memory": mem})
@@ -879,29 +875,6 @@ def api_refresh_memory(sid):
         "summary": summary_result,
         "errors": errors,
     })
-
-
-# ------------------------- 角色卡库 API（跨会话复用） -------------------------
-
-@app.route("/api/cards", methods=["GET"])
-def api_list_cards():
-    return jsonify({"cards": storage.list_character_cards(session["username"])})
-
-
-@app.route("/api/cards", methods=["POST"])
-def api_save_card():
-    data = request.get_json(force=True, silent=True) or {}
-    name = str(data.get("name") or "")
-    content = str(data.get("content") or "")
-    card_id = str(data.get("card_id") or "") or None
-    card = storage.save_character_card(name, content, card_id=card_id)
-    return jsonify(card)
-
-
-@app.route("/api/cards/<card_id>", methods=["DELETE"])
-def api_delete_card(card_id):
-    storage.delete_character_card(card_id)
-    return jsonify({"ok": True})
 
 
 # ------------------------- 会话管理 -------------------------

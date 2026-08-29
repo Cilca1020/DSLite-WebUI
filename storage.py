@@ -53,13 +53,6 @@ def _init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_sessions_user_updated
                 ON sessions(username, updated_at DESC);
-            CREATE TABLE IF NOT EXISTS character_cards (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                content TEXT NOT NULL,
-                created_at REAL NOT NULL,
-                updated_at REAL NOT NULL
-            );
         """)
         columns = {row[1] for row in conn.execute("PRAGMA table_info(sessions)")}
         if "auto_title_generated" not in columns:
@@ -98,7 +91,7 @@ def _migrate_vm_to_memory(conn):
 def _default_memory():
     """会话四层记忆的默认结构。"""
     return {
-        "card": None,      # 核心设定卡 {"content","source","updated_at"}
+        "cards": [],       # 人物卡列表 [{"id","name","content","updated_at"}]，一角色一卡
         "facts": [],       # 动态关键事实 [{"text","ts"}]
         "facts_enabled": True,  # ② 动态关键事实开关（关闭时保留内容但停止注入/维护）
         "facts_auto": True,     # ② 自动总结开关（总开关下一级；关闭时不触发后台抽取，仅手动）
@@ -128,7 +121,32 @@ def _parse_memory(raw):
             return mem
     if not isinstance(raw, dict):
         return mem
-    mem["card"] = raw.get("card") if isinstance(raw.get("card"), dict) else None
+    # 人物卡列表（多角色，一角色一卡）。兼容旧单卡结构：
+    # card 为 dict（{"content",...}）或 str 时迁移为单元素 cards 列表。
+    mem["cards"] = []
+    if isinstance(raw.get("cards"), list):
+        for c in raw["cards"]:
+            if not isinstance(c, dict):
+                continue
+            mem["cards"].append({
+                "id": str(c.get("id") or uuid.uuid4().hex),
+                "name": str(c.get("name") or "").strip(),
+                "content": str(c.get("content", "")).strip(),
+                "updated_at": float(c.get("updated_at") or 0),
+            })
+    elif raw.get("card") is not None:
+        old = raw["card"]
+        if isinstance(old, dict):
+            content = str(old.get("content", "")).strip()
+        else:
+            content = str(old).strip()
+        if content:
+            mem["cards"].append({
+                "id": uuid.uuid4().hex,
+                "name": "",
+                "content": content,
+                "updated_at": float(old.get("updated_at") or 0) if isinstance(old, dict) else 0,
+            })
     if not isinstance(raw.get("facts"), list):
         mem["facts"] = []
     else:
@@ -455,13 +473,43 @@ def save_session_memory(username, sid, memory):
     return session
 
 
-def set_session_card(username, sid, content, source="paste"):
-    """写入核心设定卡。content 为空则清除该层。返回新 memory 结构或 None。"""
+def set_session_cards_item(username, sid, op, card_id=None, name=None, content=None):
+    """人物卡列表条目操作（多角色，一角色一卡）。
+
+    op:
+      "add"    新建卡（name/content 可为空），返回带 id 的新 memory
+      "update" 按 card_id 更新 name / content（传哪个更新哪个）
+      "delete" 按 card_id 删除
+    返回新 memory 或 None（会话不存在 / update|delete 找不到卡返回原 memory）。
+    """
     memory = get_session_memory(username, sid)
     if memory is None:
         return None
-    content = (content or "").strip()
-    memory["card"] = {"content": content, "source": source, "updated_at": time.time()} if content else None
+    cards = memory.get("cards") or []
+    if op == "add":
+        cards = cards + [{
+            "id": uuid.uuid4().hex,
+            "name": (name or "").strip(),
+            "content": (content or "").strip(),
+            "updated_at": time.time(),
+        }]
+        memory["cards"] = cards
+    elif op == "update":
+        for c in cards:
+            if c.get("id") == card_id:
+                if name is not None:
+                    c["name"] = name.strip()
+                if content is not None:
+                    c["content"] = content.strip()
+                c["updated_at"] = time.time()
+                memory["cards"] = cards
+                break
+        else:
+            return memory
+    elif op == "delete":
+        memory["cards"] = [c for c in cards if c.get("id") != card_id]
+    else:
+        return memory
     save_session_memory(username, sid, memory)
     return memory
 
@@ -471,7 +519,7 @@ def set_session_facts(username, sid, facts):
     memory = get_session_memory(username, sid)
     if memory is None:
         return None
-    memory["facts"] = _parse_memory({"facts": facts, "card": None, "summary": None, "vector": memory["vector"]})["facts"]
+    memory["facts"] = _parse_memory({"facts": facts, "summary": None, "vector": memory["vector"]})["facts"]
     save_session_memory(username, sid, memory)
     return memory
 
@@ -639,63 +687,14 @@ def set_session_recent_n(username, sid, recent_n):
 
 
 def clear_session_memory_layer(username, sid, layer):
-    """清空某一层记忆（card / facts / summary），vector 为配置不清。返回新 memory 或 None。"""
+    """清空某一层记忆（cards / facts / summary），vector 为配置不清。返回新 memory 或 None。"""
     memory = get_session_memory(username, sid)
     if memory is None:
         return None
-    if layer in ("card", "facts", "summary"):
-        memory[layer] = [] if layer == "facts" else None
+    if layer in ("cards", "facts", "summary"):
+        memory[layer] = []
         save_session_memory(username, sid, memory)
     return memory
-
-
-# ------------------------- 角色卡库（跨会话复用） -------------------------
-
-def list_character_cards(username):
-    """列出用户可用的角色卡（按更新时间倒序）。"""
-    with _connect() as conn:
-        rows = conn.execute(
-            "SELECT id, name, content, created_at, updated_at FROM character_cards ORDER BY updated_at DESC"
-        ).fetchall()
-    return [{"id": r["id"], "name": r["name"], "content": r["content"],
-             "created_at": r["created_at"], "updated_at": r["updated_at"]} for r in rows]
-
-
-def get_character_card(card_id):
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT id, name, content, created_at, updated_at FROM character_cards WHERE id = ?",
-            (card_id,),
-        ).fetchone()
-    return {"id": row["id"], "name": row["name"], "content": row["content"],
-            "created_at": row["created_at"], "updated_at": row["updated_at"]} if row else None
-
-
-def save_character_card(name, content, card_id=None):
-    """保存/更新角色卡。card_id 为空则新建。返回角色卡 dict。"""
-    now = time.time()
-    name = (name or "").strip()[:50] or "未命名角色卡"
-    content = (content or "").strip()
-    with _connect() as conn:
-        if card_id:
-            conn.execute(
-                "UPDATE character_cards SET name = ?, content = ?, updated_at = ? WHERE id = ?",
-                (name, content, now, card_id),
-            )
-        else:
-            cid = _new_id()
-            conn.execute(
-                "INSERT INTO character_cards(id, name, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-                (cid, name, content, now, now),
-            )
-            return {"id": cid, "name": name, "content": content, "created_at": now, "updated_at": now}
-    # 退出 with 后 UPDATE 已 commit，再查询确保读到新值
-    return get_character_card(card_id) if card_id else None
-
-
-def delete_character_card(card_id):
-    with _connect() as conn:
-        conn.execute("DELETE FROM character_cards WHERE id = ?", (card_id,))
 
 
 def import_session(username, data):

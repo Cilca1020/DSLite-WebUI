@@ -246,23 +246,24 @@
           <div class="param-field">
             <label for="memoryContextN">最近 N 轮对话</label>
             <input id="memoryContextN" type="number" min="0" max="1000" step="1" />
-            <button id="memoryContextSaveBtn" class="mini-btn" type="button">保存</button>
-            <span class="param-hint">保留最近 N 轮对话（一轮 = 一次提问 + 一次回答）。N = 0 表示全量模式：按模型窗口尽量保留（窗口能塞多少塞多少）。N 只决定原始对话窗口大小，与下方各卡片是否启用无关。</span>
+            <span class="param-hint">保留最近 N 轮对话（一轮 = 一次提问 + 一次回答），修改后自动保存。N = 0 表示全量模式：按模型窗口尽量保留（窗口能塞多少塞多少）。N 只决定原始对话窗口大小，与下方各卡片是否启用无关。</span>
           </div>
         </section>
 
-        <!-- ① 人物卡（核心设定卡） -->
+        <!-- ① 人物卡（多角色，一角色一卡） -->
         <section class="settings-group" id="memoryCardGroup">
           <h3>① 人物卡</h3>
-          <textarea id="memoryCardInput" rows="6" placeholder="写下角色的核心设定（性格、身份、背景、说话风格…）"></textarea>
-          <div class="memory-actions">
-            <button id="memoryCardSaveBtn" class="mini-btn" type="button">保存设定</button>
-            <label class="memory-cardlib">
-              <select id="memoryCardLibSelect"></select>
-              <button id="memoryCardLibApplyBtn" class="mini-btn" type="button">应用卡库</button>
-            </label>
+          <div id="memoryCardsList" class="memory-cards-list"></div>
+          <div id="memoryCardEditor" class="memory-card-editor hidden">
+            <input id="memoryCardName" type="text" placeholder="角色名（可选，用于列表显示与导出）" maxlength="50" />
+            <textarea id="memoryCardContent" rows="6" placeholder="写下该角色的核心设定（性格、身份、背景、说话风格…），编辑后失焦自动保存"></textarea>
           </div>
-          <span class="param-hint">人物卡作为系统提示的固定部分，随每次请求无条件注入；可从卡库选择已有角色卡一键应用。</span>
+          <div class="memory-actions">
+            <button id="memoryCardImportBtn" class="mini-btn" type="button">导入</button>
+            <button id="memoryCardExportBtn" class="mini-btn" type="button">导出</button>
+          </div>
+          <input id="memoryCardImportFile" type="file" accept=".json,.txt,.md,.markdown,.yaml,.yml" hidden />
+          <span class="param-hint">每个角色一张卡，全部随每次请求无条件注入。点击列表中的角色进行编辑（失焦自动保存）；导入支持 JSON（{name, content} 或数组）与纯文本文件，导出全部卡片为 JSON。</span>
         </section>
 
         <!-- ② 动态关键事实 -->
@@ -316,7 +317,7 @@
             </label>
           </div>
           <span class="param-hint memory-sub-hint">开启时按「自动间隔」自动总结剧情进展；关闭后不再自动总结，仅支持手动「重新总结」，两个数值输入不再生效。</span>
-          <textarea id="memorySummaryText" class="memory-summary-text" rows="5" placeholder="暂无摘要。可手动编辑后点「保存摘要」，或点击「重新总结」从全部历史生成。"></textarea>
+          <textarea id="memorySummaryText" class="memory-summary-text" rows="5" placeholder="暂无摘要。可直接编辑（失焦自动保存），或点击「重新总结」从全部历史生成。"></textarea>
           <div class="memory-summary-meta" id="memorySummaryMeta"></div>
           <div class="memory-actions">
             <label class="memory-num-field">
@@ -327,11 +328,9 @@
               <span>自动间隔（轮）</span>
               <input id="memorySummaryAuto" type="number" min="0" max="1000" step="1" />
             </label>
-            <button id="memorySummarySaveConfigBtn" class="mini-btn" type="button">保存配置</button>
-            <button id="memorySummarySaveTextBtn" class="mini-btn" type="button">保存摘要</button>
             <button id="memorySummaryRunBtn" class="mini-btn" type="button">重新总结</button>
           </div>
-          <span class="param-hint">摘要按切片轮数分段总结剧情进展，随每次请求注入；自动间隔 = 每 N 轮触发一次自动总结，0 = 关闭自动总结（仅手动）。摘要可直接编辑后点「保存摘要」；「重新总结」从全部历史重新生成并覆盖；关闭开关后保留已总结文本但不注入、不自动/手动总结。</span>
+          <span class="param-hint">摘要按切片轮数分段总结剧情进展，随每次请求注入；自动间隔 = 每 N 轮触发一次自动总结，0 = 关闭自动总结（仅手动）。摘要可直接编辑（失焦自动保存，清空并失焦 = 清除摘要）；「重新总结」从全部历史重新生成并覆盖；关闭开关后保留已总结文本但不注入、不自动/手动总结。</span>
         </section>
 
         <!-- ④ 向量记忆 -->

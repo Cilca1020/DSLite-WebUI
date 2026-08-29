@@ -111,10 +111,10 @@ def build_context(username, sid, user_messages, data=None, params=None, stored_m
 
     layers = []
 
-    # ① 核心设定卡（无条件，优先级最高）
-    card = (memory or {}).get("card")
-    if card and str(card.get("content", "")).strip():
-        layers.append({"role": _CARD_ROLE, "content": _card_block(card)})
+    # ① 人物卡（多角色，一角色一卡，无条件逐卡注入，优先级最高）
+    for card in (memory or {}).get("cards") or []:
+        if str(card.get("content", "")).strip():
+            layers.append({"role": _CARD_ROLE, "content": _card_block(card)})
 
     # ② 动态关键事实（开关开启时无条件注入）
     facts = (memory or {}).get("facts") or []
@@ -136,9 +136,11 @@ def build_context(username, sid, user_messages, data=None, params=None, stored_m
 
 
 def _card_block(card):
-    src = card.get("source", "paste")
-    label = {"paste": "用户导入", "file": "文件导入", "card_lib": "角色卡库"}.get(src, "用户导入")
-    return f"【核心设定（{label}，必须始终遵守）】\n{card.get('content', '')}"
+    name = (card.get("name") or "").strip()
+    content = card.get("content", "")
+    if name:
+        return f"【角色设定：{name}（必须始终遵守）】\n{content}"
+    return f"【核心设定（用户导入，必须始终遵守）】\n{content}"
 
 
 def _facts_block(facts):

@@ -2,7 +2,7 @@
  *
  * 层级顺序（与后端注入顺序一致）：
  *   ⓪ 系统提示词        —— 无条件注入，作为 system 消息最先发送
- *   ① 人物卡（card）    —— 无条件注入，随每次请求作为 system 前缀
+ *   ① 人物卡（cards）   —— 无条件注入，多角色一卡，随每次请求作为 system 前缀
  *   ② 动态关键事实      —— 无条件注入，自动抽取 + 可手动触发
  *   ③ 剧情摘要          —— 无条件注入，增量总结 + 可手动触发
  *   ④ 向量记忆          —— 按需召回，检索相似历史片段
@@ -19,6 +19,7 @@ const memEl = (id) => document.getElementById(id);
 // 把「记忆」页各卡片恢复为未选中会话的占位态（顶部批量按钮一并隐藏）
 function resetMemoryPanel() {
   MEMORY_STATE = null;
+  MEMORY_CARD_SELECTED = null;
   const empty = memEl("memoryEmptyHint");
   if (empty) empty.classList.remove("hidden");
   const bar = memEl("memoryMasterBar");
@@ -55,19 +56,14 @@ async function loadMemoryPanel() {
   } catch (_) {
     showToast("读取记忆失败");
   }
-
-  // 角色卡库下拉框（独立于记忆加载，失败不阻塞）
-  refreshCardLibSelect();
 }
 
 // 把记忆数据渲染到各卡片
 function renderMemoryPanel() {
   const mem = MEMORY_STATE || {};
 
-  // ① 人物卡
-  const card = mem.card || {};
-  const cardInput = memEl("memoryCardInput");
-  if (cardInput && !cardInput.dataset.dirty) cardInput.value = card.content || "";
+  // ① 人物卡（多角色）：渲染列表 + 编辑器；本地选中态在重渲染后保持
+  renderMemoryCards();
 
   // ② 动态关键事实
   renderFacts();
@@ -162,86 +158,218 @@ function refreshMemoryCardStates() {
   syncMemoryVectorField();
 }
 
-// 刷新角色卡库下拉框（跨会话复用的人物卡）
-async function refreshCardLibSelect() {
-  const sel = memEl("memoryCardLibSelect");
-  if (!sel) return;
+/* ---------------- 事件绑定 ---------------- */
+
+// 人物卡模块本地状态：当前在编辑器中打开的卡 id
+let MEMORY_CARD_SELECTED = null;
+
+// 会话人物卡列表
+function sessionCards() {
+  const mem = MEMORY_STATE || {};
+  return Array.isArray(mem.cards) ? mem.cards : [];
+}
+
+// 人物卡条目操作 API（增删改）
+async function cardsItemOp(op, extra = {}) {
+  if (!currentSessionId) { showToast("请先选择对话"); return null; }
   try {
-    const r = await apiGet("/api/cards");
-    const cards = (r && r.cards) || [];
-    sel.innerHTML = "";
-    const placeholder = document.createElement("option");
-    placeholder.value = "";
-    placeholder.textContent = cards.length ? "选择角色卡…" : "卡库为空";
-    sel.appendChild(placeholder);
-    cards.forEach((c) => {
-      const o = document.createElement("option");
-      o.value = c.id;
-      o.textContent = c.name || c.id;
-      sel.appendChild(o);
-    });
-    sel.disabled = !cards.length;
+    const r = await apiPost("/api/sessions/" + currentSessionId + "/cards-item", Object.assign({ op }, extra));
+    if (r && r.error) { showToast(r.error); return null; }
+    if (r && r.memory) MEMORY_STATE = r.memory;
+    return r;
   } catch (_) {
-    sel.innerHTML = '<option value="">卡库读取失败</option>';
+    showToast("操作失败");
+    return null;
   }
 }
 
-/* ---------------- 事件绑定 ---------------- */
-
-// ① 人物卡：保存设定
-function bindMemoryCard() {
-  const btn = memEl("memoryCardSaveBtn");
-  if (!btn) return;
-  btn.onclick = async () => {
-    if (!currentSessionId) return showToast("请先选择对话");
-    const input = memEl("memoryCardInput");
-    const content = (input && input.value || "").trim();
-    if (!content) return showToast("设定内容为空");
-    btn.disabled = true;
-    try {
-      const r = await apiPost("/api/sessions/" + currentSessionId + "/card", {
-        content: content,
-        source: "paste",
-      });
-      if (r && r.error) return showToast(r.error);
-      input.dataset.dirty = "";
-      showToast("人物卡已保存");
-    } catch (_) {
-      showToast("保存失败");
-    } finally {
-      btn.disabled = false;
-    }
-  };
-  // 内容被用户编辑后标记 dirty，避免渲染时被后端数据覆盖
-  const input = memEl("memoryCardInput");
-  if (input) input.addEventListener("input", () => { input.dataset.dirty = "1"; });
+// 添加角色：建一张空卡并打开编辑（入口为列表末尾「+ 新建」）
+async function addNewCard() {
+  const r = await cardsItemOp("add", { name: "", content: "" });
+  if (r) {
+    const cards = sessionCards();
+    MEMORY_CARD_SELECTED = cards.length ? cards[cards.length - 1].id : null;
+    renderMemoryCards();
+    const nameInput = memEl("memoryCardName");
+    if (nameInput) nameInput.focus();
+  }
 }
 
-// ① 人物卡：从卡库应用
-function bindMemoryCardLib() {
-  const btn = memEl("memoryCardLibApplyBtn");
-  if (!btn) return;
-  btn.onclick = async () => {
-    if (!currentSessionId) return showToast("请先选择对话");
-    const sel = memEl("memoryCardLibSelect");
-    const cardId = sel && sel.value;
-    if (!cardId) return showToast("请先选择一张角色卡");
-    btn.disabled = true;
-    try {
-      const r = await apiPost("/api/sessions/" + currentSessionId + "/card-lib", { card_id: cardId });
-      if (r && r.error) return showToast(r.error);
-      const input = memEl("memoryCardInput");
-      if (input) {
-        input.value = (r.memory && r.memory.card && r.memory.card.content) || "";
-        input.dataset.dirty = "";
-      }
-      showToast("已应用角色卡");
-    } catch (_) {
-      showToast("应用失败");
-    } finally {
-      btn.disabled = false;
+// ① 渲染人物卡列表 + 编辑器（选中态跨重渲染保持）
+function renderMemoryCards() {
+  const cards = sessionCards();
+  const list = memEl("memoryCardsList");
+  const editor = memEl("memoryCardEditor");
+  if (!list || !editor) return;
+
+  // 选中卡若已被删除则回落到第一张
+  if (MEMORY_CARD_SELECTED && !cards.some((c) => c.id === MEMORY_CARD_SELECTED)) {
+    MEMORY_CARD_SELECTED = null;
+  }
+  if (!MEMORY_CARD_SELECTED && cards.length) MEMORY_CARD_SELECTED = cards[0].id;
+  const selected = cards.find((c) => c.id === MEMORY_CARD_SELECTED) || null;
+
+  // 列表：一角色一项，点击选中编辑；当前选中的高亮
+  list.innerHTML = "";
+  cards.forEach((c) => {
+    const item = document.createElement("div");
+    item.className = "memory-card-item" + (selected && c.id === selected.id ? " selected" : "");
+    const name = document.createElement("span");
+    name.className = "memory-card-item-name";
+    name.textContent = c.name || "未命名";
+    name.title = c.content ? c.content.slice(0, 80) : "（空卡）";
+    item.appendChild(name);
+    if (selected && c.id === selected.id) {
+      const del = document.createElement("button");
+      del.className = "memory-card-item-del";
+      del.type = "button";
+      // 叉号用 SVG 绘制，避免字形垂直偏移导致的不对齐
+      del.innerHTML =
+        '<svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">' +
+        '<path d="M1.5 1.5 L8.5 8.5 M8.5 1.5 L1.5 8.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg>';
+      del.title = "删除该角色卡";
+      del.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        if (!confirm("删除角色卡「" + (c.name || "未命名") + "」？")) return;
+        const r = await cardsItemOp("delete", { id: c.id });
+        if (r) {
+          MEMORY_CARD_SELECTED = null;
+          renderMemoryCards();
+          showToast("已删除");
+        }
+      });
+      item.appendChild(del);
+    }
+    item.addEventListener("click", () => {
+      if (MEMORY_CARD_SELECTED === c.id) return;
+      MEMORY_CARD_SELECTED = c.id;
+      renderMemoryCards();
+    });
+    list.appendChild(item);
+  });
+  if (!cards.length) {
+    const empty = document.createElement("div");
+    empty.className = "memory-cards-empty";
+    empty.textContent = "暂无角色卡，点击「+ 新建」或「导入」创建。";
+    list.appendChild(empty);
+  }
+
+  // 新建入口：始终排在列表最右侧（+ 图标 + 新建）
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "memory-card-item memory-card-item-new";
+  add.title = "新建角色卡";
+  const plus = document.createElement("span");
+  plus.className = "memory-card-item-plus";
+  plus.textContent = "+";
+  const addLabel = document.createElement("span");
+  addLabel.className = "memory-card-item-name";
+  addLabel.textContent = "新建";
+  add.appendChild(plus);
+  add.appendChild(addLabel);
+  add.addEventListener("click", () => addNewCard());
+  list.appendChild(add);
+
+  // 编辑器：只展示当前选中的卡
+  const nameInput = memEl("memoryCardName");
+  const contentInput = memEl("memoryCardContent");
+  if (!selected) {
+    editor.classList.add("hidden");
+    if (nameInput) nameInput.value = "";
+    if (contentInput) contentInput.value = "";
+    return;
+  }
+  editor.classList.remove("hidden");
+  // 失焦自动保存期间会禁用输入框，此时避免覆盖用户正在输入的内容
+  if (nameInput && document.activeElement !== nameInput) nameInput.value = selected.name || "";
+  if (contentInput && document.activeElement !== contentInput) contentInput.value = selected.content || "";
+}
+
+// ① 人物卡：添加 / 导入 / 导出 / 编辑器失焦自动保存
+function bindMemoryCards() {
+  const nameInput = memEl("memoryCardName");
+  const contentInput = memEl("memoryCardContent");
+
+  const saveSelected = async (field) => {
+    const selected = sessionCards().find((c) => c.id === MEMORY_CARD_SELECTED);
+    if (!selected || !currentSessionId) return;
+    const name = nameInput ? nameInput.value : selected.name;
+    const content = contentInput ? contentInput.value : selected.content;
+    if (name === selected.name && content === selected.content) return; // 无变化不保存
+    if (field) field.disabled = true;
+    const r = await cardsItemOp("update", { id: selected.id, name, content });
+    if (field) field.disabled = false;
+    if (r) {
+      renderMemoryCards();
+      showToast("人物卡已保存");
     }
   };
+  if (nameInput) nameInput.addEventListener("change", () => saveSelected(nameInput));
+  if (contentInput) contentInput.addEventListener("change", () => saveSelected(contentInput));
+
+  // 添加角色：建一张空卡并打开编辑（入口为列表末尾「+ 新建」，见 addNewCard）
+
+  // 导入：JSON（{name,content} / 数组 / {cards:[...]}) 或纯文本；全部作为新卡追加
+  const importBtn = memEl("memoryCardImportBtn");
+  const fileInput = memEl("memoryCardImportFile");
+  if (importBtn && fileInput) {
+    importBtn.onclick = () => fileInput.click();
+    fileInput.addEventListener("change", async () => {
+      const file = fileInput.files && fileInput.files[0];
+      fileInput.value = "";
+      if (!file || !currentSessionId) return;
+      let text = "";
+      try { text = await file.text(); } catch (_) { return showToast("读取文件失败"); }
+      // 识别内容：JSON 对象/数组优先，失败则整个文件当纯文本正文
+      let imported = null; // [{name, content}]
+      const baseName = file.name.replace(/\.[^.]+$/, "");
+      try {
+        const data = JSON.parse(text);
+        const arr = Array.isArray(data) ? data : (Array.isArray(data.cards) ? data.cards : [data]);
+        imported = arr
+          .map((c) => ({
+            name: String((c && c.name) || "").trim(),
+            content: String((c && (c.content || c.text || c.card)) || "").trim(),
+          }))
+          .filter((c) => c.content);
+      } catch (_) { /* 非 JSON，按纯文本处理 */ }
+      if (!imported || !imported.length) {
+        const content = text.trim();
+        if (!content) return showToast("文件为空");
+        imported = [{ name: baseName, content }];
+      }
+      // 逐卡追加（name 缺省用文件名）
+      let lastId = null;
+      for (const c of imported) {
+        const r = await cardsItemOp("add", { name: c.name || baseName, content: c.content });
+        if (!r) return;
+        const cards = sessionCards();
+        lastId = cards.length ? cards[cards.length - 1].id : null;
+      }
+      MEMORY_CARD_SELECTED = lastId;
+      renderMemoryCards();
+      showToast("已导入 " + imported.length + " 张角色卡");
+    });
+  }
+
+  // 导出：全部卡片打包为 JSON 下载
+  const exportBtn = memEl("memoryCardExportBtn");
+  if (exportBtn) {
+    exportBtn.onclick = () => {
+      const cards = sessionCards().filter((c) => c.content);
+      if (!cards.length) return showToast("没有可导出的角色卡");
+      const payload = {
+        exported_at: new Date().toISOString(),
+        cards: cards.map((c) => ({ name: c.name || "未命名", content: c.content })),
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "人物卡-" + (cards.length === 1 ? (cards[0].name || "未命名") : "全部") + ".json";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    };
+  }
 }
 
 // ② 动态关键事实：条目级操作 API（增删改 / 上锁解锁）
@@ -306,8 +434,8 @@ function renderFacts() {
     const actions = document.createElement("span");
     actions.className = "memory-fact-actions";
 
-    // 上锁/解锁：即时生效
-    actions.appendChild(factIconBtn(locked ? "解锁（重新总结时可被更新）" : "上锁（不被重新总结覆盖）", locked ? UNLOCK_SVG : LOCK_SVG, async (e) => {
+    // 上锁/解锁：即时生效；图标显示当前状态（锁定=闭锁，未锁=开锁），悬停提示为动作
+    actions.appendChild(factIconBtn(locked ? "解锁（重新总结时可被更新）" : "上锁（不被重新总结覆盖）", locked ? LOCK_SVG : UNLOCK_SVG, async (e) => {
       const r = await factsItemOp("lock", i, { locked: !locked });
       if (r) showToast(!locked ? "已上锁" : "已解锁");
     }));
@@ -390,10 +518,9 @@ function bindMemoryFacts() {
   };
 }
 
-// 最近 N 轮：独立上下文保留策略
+// 最近 N 轮：独立上下文保留策略（修改后自动保存）
 function bindMemoryContext() {
   const field = memEl("memoryContextN");
-  const saveBtn = memEl("memoryContextSaveBtn");
   if (!field) return;
   const saveCurrent = async () => {
     if (!currentSessionId) return;
@@ -414,43 +541,61 @@ function bindMemoryContext() {
     }
   };
   field.addEventListener("change", saveCurrent);
-  if (saveBtn) saveBtn.addEventListener("click", saveCurrent);
 }
 
-// ③ 剧情摘要：保存配置 + 重新总结
+// ③ 剧情摘要：触发参数自动保存 / 摘要文本失焦自动保存 / 重新总结
 function bindMemorySummary() {
-  const saveBtn = memEl("memorySummarySaveConfigBtn");
-  if (saveBtn) {
-    saveBtn.onclick = async () => {
-      if (!currentSessionId) return showToast("请先选择对话");
-      const slice = parseInt(memEl("memorySummarySlice").value, 10);
-      const auto = parseInt(memEl("memorySummaryAuto").value, 10);
-      const body = {};
-      if (!isNaN(slice)) body.slice_rounds = Math.max(1, Math.min(200, slice));
-      if (!isNaN(auto)) body.auto_rounds = Math.max(0, Math.min(1000, auto));
-      if (!Object.keys(body).length) return showToast("请填写配置");
-      saveBtn.disabled = true;
-      try {
-        const r = await apiPost("/api/sessions/" + currentSessionId + "/summary-config", body);
-        if (r && r.error) return showToast(r.error);
-        showToast("摘要配置已保存");
-        await loadMemoryPanel();
-      } catch (_) {
-        showToast("保存失败");
-      } finally {
-        saveBtn.disabled = false;
-      }
-    };
+  // 摘要触发参数（切片轮数 / 自动间隔）：修改后自动保存，无需单独的保存按钮
+  const saveSummaryConfig = async (body, input) => {
+    if (!currentSessionId) return;
+    input.disabled = true;
+    try {
+      const r = await apiPost("/api/sessions/" + currentSessionId + "/summary-config", body);
+      if (r && r.error) return showToast(r.error);
+      MEMORY_STATE = MEMORY_STATE || {};
+      MEMORY_STATE.summary = Object.assign({}, MEMORY_STATE.summary || {}, body);
+      showToast("已保存");
+    } catch (_) {
+      showToast("保存失败");
+    } finally {
+      // 恢复输入框可用态（禁用与否由自动总结开关状态决定）
+      refreshMemoryCardStates();
+    }
+  };
+  const sliceInput = memEl("memorySummarySlice");
+  if (sliceInput) {
+    sliceInput.addEventListener("change", () => {
+      const v = parseInt(sliceInput.value, 10);
+      if (isNaN(v)) return loadMemoryPanel(); // 无效输入回读
+      const body = { slice_rounds: Math.max(1, Math.min(200, v)) };
+      sliceInput.value = body.slice_rounds;
+      saveSummaryConfig(body, sliceInput);
+    });
+  }
+  const autoRoundsInput = memEl("memorySummaryAuto");
+  if (autoRoundsInput) {
+    autoRoundsInput.addEventListener("change", () => {
+      const v = parseInt(autoRoundsInput.value, 10);
+      if (isNaN(v)) return loadMemoryPanel(); // 无效输入回读
+      const body = { auto_rounds: Math.max(0, Math.min(1000, v)) };
+      autoRoundsInput.value = body.auto_rounds;
+      saveSummaryConfig(body, autoRoundsInput);
+    });
   }
 
-  // 保存手动编辑的摘要文本（空文本 = 清除摘要）
-  const saveTextBtn = memEl("memorySummarySaveTextBtn");
-  if (saveTextBtn) {
-    saveTextBtn.onclick = async () => {
-      if (!currentSessionId) return showToast("请先选择对话");
-      const text = (memEl("memorySummaryText").value || "").trim();
-      if (!text && !confirm("摘要为空将清除当前摘要，确定保存？")) return;
-      saveTextBtn.disabled = true;
+  // 摘要文本：编辑后失焦自动保存；清空并失焦 = 清除摘要（需确认）
+  const summaryTextArea = memEl("memorySummaryText");
+  if (summaryTextArea) {
+    summaryTextArea.addEventListener("change", async () => {
+      if (!currentSessionId) return;
+      const text = (summaryTextArea.value || "").trim();
+      const oldText = ((MEMORY_STATE || {}).summary || {}).text || "";
+      if (text === oldText) return; // 无变化不保存
+      if (!text && !confirm("摘要为空将清除当前摘要，确定？")) {
+        summaryTextArea.value = oldText;
+        return;
+      }
+      summaryTextArea.disabled = true;
       try {
         const r = await apiPost("/api/sessions/" + currentSessionId + "/summary-text", { text });
         if (r && r.error) return showToast(r.error);
@@ -460,9 +605,9 @@ function bindMemorySummary() {
       } catch (_) {
         showToast("保存失败");
       } finally {
-        saveTextBtn.disabled = false;
+        summaryTextArea.disabled = false;
       }
-    };
+    });
   }
 
   const runBtn = memEl("memorySummaryRunBtn");
@@ -670,8 +815,7 @@ function bindMemoryCardSwitches() {
 /* ---------------- 初始化 ---------------- */
 
 function initMemoryPanel() {
-  bindMemoryCard();
-  bindMemoryCardLib();
+  bindMemoryCards();
   bindFactAdd();
   bindMemoryFacts();
   bindMemoryContext();
