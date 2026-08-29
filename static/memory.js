@@ -145,6 +145,14 @@ function refreshMemoryCardStates() {
   if (summarySwitch) summarySwitch.checked = summaryEnabled;
   const summaryGroup = memEl("memorySummaryGroup");
   if (summaryGroup) summaryGroup.classList.toggle("memory-off", !summaryEnabled);
+  // 自动总结开关（总开关下一级）：默认开启；关闭时两个数值输入置灰不可编辑
+  const summaryAutoSwitch = memEl("memorySummaryAutoSwitch");
+  const summaryAutoOn = summary.auto !== false;
+  if (summaryAutoSwitch) summaryAutoSwitch.checked = summaryAutoOn;
+  const summarySlice = memEl("memorySummarySlice");
+  if (summarySlice) summarySlice.disabled = !summaryAutoOn;
+  const summaryAutoRounds = memEl("memorySummaryAuto");
+  if (summaryAutoRounds) summaryAutoRounds.disabled = !summaryAutoOn;
 
   // ④ 向量记忆：开关由 main.js / chat.js（vmEnabled）管理，这里按可见开关态同步置灰与 top_k 禁用态
   const vectorSwitch = memEl("vmEnabled");
@@ -435,6 +443,28 @@ function bindMemorySummary() {
     };
   }
 
+  // 保存手动编辑的摘要文本（空文本 = 清除摘要）
+  const saveTextBtn = memEl("memorySummarySaveTextBtn");
+  if (saveTextBtn) {
+    saveTextBtn.onclick = async () => {
+      if (!currentSessionId) return showToast("请先选择对话");
+      const text = (memEl("memorySummaryText").value || "").trim();
+      if (!text && !confirm("摘要为空将清除当前摘要，确定保存？")) return;
+      saveTextBtn.disabled = true;
+      try {
+        const r = await apiPost("/api/sessions/" + currentSessionId + "/summary-text", { text });
+        if (r && r.error) return showToast(r.error);
+        MEMORY_STATE = r.memory || MEMORY_STATE;
+        showToast("摘要已保存");
+        await loadMemoryPanel();
+      } catch (_) {
+        showToast("保存失败");
+      } finally {
+        saveTextBtn.disabled = false;
+      }
+    };
+  }
+
   const runBtn = memEl("memorySummaryRunBtn");
   if (runBtn) {
     runBtn.onclick = async () => {
@@ -498,6 +528,8 @@ function bindMemoryMasterButtons() {
           facts_enabled: true,
           summary_enabled: true,
           vector_enabled: true,
+          facts_auto: true,
+          summary_auto: true,
           reset_values: true,
         });
         if (r && r.error) return showToast(r.error);
@@ -580,6 +612,33 @@ function bindMemoryCardSwitches() {
       } catch (e) {
         factsSwitch.checked = !on;
         if (group) group.classList.toggle("memory-off", on);
+        showToast(e && e.message ? e.message : "设置失败");
+      }
+    });
+  }
+
+  // ③ 自动总结开关（总开关下一级）：关闭时后台不自动总结，两个数值输入置灰不可编辑
+  const summaryAutoSwitch = memEl("memorySummaryAutoSwitch");
+  if (summaryAutoSwitch) {
+    summaryAutoSwitch.addEventListener("change", async () => {
+      if (!currentSessionId) { refreshMemoryCardStates(); return showToast("请先选择对话"); }
+      const on = summaryAutoSwitch.checked;
+      // 即时生效：数值输入随开关置灰/恢复
+      const sliceInput = memEl("memorySummarySlice");
+      if (sliceInput) sliceInput.disabled = !on;
+      const autoInput = memEl("memorySummaryAuto");
+      if (autoInput) autoInput.disabled = !on;
+      MEMORY_STATE = MEMORY_STATE || {};
+      MEMORY_STATE.summary = Object.assign({}, MEMORY_STATE.summary || {}, { auto: on });
+      try {
+        const r = await apiPost("/api/sessions/" + currentSessionId + "/memory-switches", { summary_auto: on });
+        if (r && r.error) throw new Error(r.error);
+        MEMORY_STATE = r.memory || MEMORY_STATE;
+        showToast(on ? "已开启自动总结" : "已关闭自动总结");
+      } catch (e) {
+        summaryAutoSwitch.checked = !on; // 失败回滚
+        if (sliceInput) sliceInput.disabled = on;
+        if (autoInput) autoInput.disabled = on;
         showToast(e && e.message ? e.message : "设置失败");
       }
     });

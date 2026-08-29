@@ -165,12 +165,14 @@ def _parse_summary(s):
         "slice_rounds": config.SUMMARY_SLICE_ROUNDS,
         "auto_rounds": config.SUMMARY_AUTO_ROUNDS,
         "enabled": True,  # ③ 剧情摘要开关（关闭时保留内容但停止注入/自动/手动总结）
+        "auto": True,     # ③ 自动总结开关（总开关下一级；关闭时后台不自动总结，仅手动）
     }
     if not isinstance(s, dict):
         return default
     out = dict(default)
     out["text"] = str(s.get("text") or "").strip()
     out["enabled"] = bool(s.get("enabled", True))
+    out["auto"] = bool(s.get("auto", True))
     try:
         out["summarized_ts"] = float(s["summarized_ts"]) if s.get("summarized_ts") is not None else None
     except (TypeError, ValueError):
@@ -490,6 +492,7 @@ def set_session_summary(username, sid, text, last_round=None):
             "slice_rounds": old.get("slice_rounds"),
             "auto_rounds": old.get("auto_rounds"),
             "enabled": old.get("enabled", True),
+            "auto": old.get("auto", True),
         }
     else:
         memory["summary"] = None
@@ -532,10 +535,12 @@ def set_session_summary_config(username, sid, slice_rounds=None, auto_rounds=Non
 
 
 def set_session_memory_switches(username, sid, facts_enabled=None, summary_enabled=None,
-                                vector_enabled=None, reset_values=False, facts_auto=None):
+                                vector_enabled=None, reset_values=False, facts_auto=None,
+                                summary_auto=None):
     """批量设置记忆卡片开关（2/3/4 层），供「一键配置 / 关闭智能总结」与单卡开关调用。
 
     facts_auto：② 动态事实的自动总结开关（总开关下一级），None=不更新。
+    summary_auto：③ 剧情摘要的自动总结开关（总开关下一级），None=不更新。
     reset_values=True（一键配置）时把数值恢复默认：最近 N 轮=10、
     摘要切片/自动间隔、向量 TopK 与 recent_n 恢复默认。
     只更新传入的字段，其余保留。返回新 memory 或 None（会话不存在）。
@@ -550,6 +555,10 @@ def set_session_memory_switches(username, sid, facts_enabled=None, summary_enabl
     if summary_enabled is not None:
         s = dict(memory.get("summary") or {})
         s["enabled"] = bool(summary_enabled)
+        memory["summary"] = _parse_summary(s)
+    if summary_auto is not None:
+        s = dict(memory.get("summary") or {})
+        s["auto"] = bool(summary_auto)
         memory["summary"] = _parse_summary(s)
     if vector_enabled is not None:
         vec = dict(memory.get("vector") or _parse_vm(None))

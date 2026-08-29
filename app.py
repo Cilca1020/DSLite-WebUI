@@ -695,6 +695,20 @@ def api_summary_config(sid):
     })
 
 
+@app.route("/api/sessions/<sid>/summary-text", methods=["POST"])
+def api_summary_text(sid):
+    """手动保存编辑后的剧情摘要文本。
+
+    body: {"text": str}；空文本视为清除摘要。总结点（last_round）与各项配置保留。
+    """
+    username = session["username"]
+    data = request.get_json(force=True, silent=True) or {}
+    mem = storage.set_session_summary(username, sid, str(data.get("text") or ""))
+    if mem is None:
+        return jsonify({"error": "会话不存在"}), 404
+    return jsonify({"memory": mem})
+
+
 @app.route("/api/sessions/<sid>/memory-switches", methods=["POST"])
 def api_memory_switches(sid):
     """批量设置记忆卡片开关（2/3/4 层）与数值恢复，供「一键配置 / 关闭智能总结 / 单卡开关」调用。
@@ -703,13 +717,14 @@ def api_memory_switches(sid):
       facts_enabled:   bool  ② 动态关键事实开关（卡片总开关）
       facts_auto:      bool  ② 自动总结开关（总开关下一级；关闭时后台不自动抽取）
       summary_enabled: bool  ③ 剧情摘要开关
+      summary_auto:    bool  ③ 自动总结开关（总开关下一级；关闭时后台不自动总结）
       vector_enabled:  bool  ④ 向量记忆开关
       reset_values:    bool  一键配置：恢复数值默认（最近 N 轮=10、摘要切片/自动间隔、向量 TopK/recent_n）
     返回完整 memory 结构。
     """
     username = session["username"]
     data = request.get_json(force=True, silent=True) or {}
-    if not any(k in data for k in ("facts_enabled", "facts_auto", "summary_enabled", "vector_enabled", "reset_values")):
+    if not any(k in data for k in ("facts_enabled", "facts_auto", "summary_enabled", "summary_auto", "vector_enabled", "reset_values")):
         return jsonify({"error": "缺少开关参数"}), 400
     mem = storage.set_session_memory_switches(
         username,
@@ -717,6 +732,7 @@ def api_memory_switches(sid):
         facts_enabled=data.get("facts_enabled"),
         facts_auto=data.get("facts_auto"),
         summary_enabled=data.get("summary_enabled"),
+        summary_auto=data.get("summary_auto"),
         vector_enabled=data.get("vector_enabled"),
         reset_values=bool(data.get("reset_values")),
     )

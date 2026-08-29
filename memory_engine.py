@@ -557,6 +557,7 @@ def should_auto_summary(username, sid, stored_msgs=None):
 
     阈值优先读会话 memory.summary.auto_rounds（用户可设置），回退到
     config.SUMMARY_AUTO_ROUNDS；auto_rounds=0 表示关闭自动总结（仅手动）。
+    剧情摘要开关或自动总结开关（summary.auto）关闭时一律不触发。
     """
     memory = _get_memory(username, sid)
     if memory is None:
@@ -564,6 +565,9 @@ def should_auto_summary(username, sid, stored_msgs=None):
     # 剧情摘要开关关闭：自动总结不触发（已总结文本保留，只是不上传）
     summary = memory.get("summary") or {}
     if not summary.get("enabled", True):
+        return False
+    # 自动总结开关（总开关下一级）关闭：后台不自动总结，仅手动
+    if not summary.get("auto", True):
         return False
     auto_rounds = summary.get("auto_rounds")
     if auto_rounds is None:

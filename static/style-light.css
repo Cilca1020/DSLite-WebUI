@@ -915,6 +915,12 @@ body {
   background: var(--field-bg);
   color: var(--field-text);
 }
+/* 数值输入禁用态（如摘要「自动总结」关闭时的切片轮数/自动间隔）：置灰不可编辑 */
+.memory-num-field input:disabled {
+  color: var(--text-sidebar-dim);
+  background: rgba(128, 128, 128, 0.1);
+  cursor: not-allowed;
+}
 
 /* 对话区：chat-wrap 承接 .main 的弹性布局，chat-box 在其内部滚动 */
 .chat-wrap {
