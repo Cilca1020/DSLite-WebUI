@@ -754,6 +754,8 @@ function renderFacts() {
 
     // 删除
     actions.appendChild(factIconBtn("删除", DEL_SVG, async () => {
+      const factText = (f.text || "").trim();
+      if (!confirm("删除关键事实「" + (factText.length > 20 ? factText.slice(0, 20) + "…" : factText) + "」？")) return;
       const r = await factsItemOp("delete", i);
       if (r) showToast("已删除");
     }));
