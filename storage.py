@@ -133,9 +133,11 @@ def _parse_memory(raw):
                 "id": str(c.get("id") or uuid.uuid4().hex),
                 "name": str(c.get("name") or "").strip(),
                 "content": str(c.get("content", "")).strip(),
+                "main": bool(c.get("main", False)),  # 主角色标记：AI 第一人称扮演的角色
                 "updated_at": float(c.get("updated_at") or 0),
             })
-    elif raw.get("card") is not None:
+    # 兼容旧单卡结构：cards 为空且存在旧 card 字段（dict 或 str）时迁移为单元素列表
+    if not mem["cards"] and raw.get("card") is not None:
         old = raw["card"]
         if isinstance(old, dict):
             content = str(old.get("content", "")).strip()
@@ -146,8 +148,10 @@ def _parse_memory(raw):
                 "id": uuid.uuid4().hex,
                 "name": "",
                 "content": content,
+                "main": True,  # 旧单卡结构：唯一卡即主角色
                 "updated_at": float(old.get("updated_at") or 0) if isinstance(old, dict) else 0,
             })
+    # 注意：允许没有任何主角色卡（main 全为 False），不强制回退
     if not isinstance(raw.get("facts"), list):
         mem["facts"] = []
     else:
@@ -490,10 +494,11 @@ def set_session_cards_item(username, sid, op, card_id=None, name=None, content=N
     """人物卡列表条目操作（多角色，一角色一卡）。
 
     op:
-      "add"    新建卡（name/content 可为空），返回带 id 的新 memory
-      "update" 按 card_id 更新 name / content（传哪个更新哪个）
-      "delete" 按 card_id 删除
-    返回新 memory 或 None（会话不存在 / update|delete 找不到卡返回原 memory）。
+      "add"      新建卡（name/content 可为空），返回带 id 的新 memory
+      "update"   按 card_id 更新 name / content（传哪个更新哪个）
+      "delete"   按 card_id 删除（允许删除后没有任何主角色卡）
+      "set-main" 按 card_id 设为主角色卡；card_id 为空时取消所有主角色标记（置空）
+    返回新 memory 或 None（会话不存在 / update|delete|set-main 找不到卡返回原 memory）。
     """
     memory = get_session_memory(username, sid)
     if memory is None:
@@ -504,6 +509,7 @@ def set_session_cards_item(username, sid, op, card_id=None, name=None, content=N
             "id": uuid.uuid4().hex,
             "name": (name or "").strip(),
             "content": (content or "").strip(),
+            "main": False,  # 新建卡不默认主角色，由用户手动点星标指定（允许置空）
             "updated_at": time.time(),
         }]
         memory["cards"] = cards
@@ -520,7 +526,24 @@ def set_session_cards_item(username, sid, op, card_id=None, name=None, content=N
         else:
             return memory
     elif op == "delete":
+        # 删除后允许没有任何主角色卡，不做自动接任
         memory["cards"] = [c for c in cards if c.get("id") != card_id]
+    elif op == "set-main":
+        # card_id 为空：取消所有主角色标记（允许主角色置空）；否则切换到指定卡
+        if card_id:
+            found = False
+            for c in cards:
+                if c.get("id") == card_id:
+                    c["main"] = True
+                    found = True
+                else:
+                    c["main"] = False
+            if not found:
+                return memory
+        else:
+            for c in cards:
+                c["main"] = False
+        memory["cards"] = cards
     else:
         return memory
     save_session_memory(username, sid, memory)

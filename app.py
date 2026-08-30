@@ -543,14 +543,14 @@ def api_session_memory(sid):
 def api_cards_item(sid):
     """人物卡列表条目操作（多角色，一角色一卡）。
 
-    body: {"op": "add|update|delete", "id": "...", "name": "...", "content": "..."}
+    body: {"op": "add|update|delete|set-main", "id": "...", "name": "...", "content": "..."}
     add：新建卡（name/content 可为空）；update：按 id 更新 name/content（传哪个更新哪个）；
-    delete：按 id 删除。返回完整 memory。
+    delete：按 id 删除；set-main：按 id 设为主角色卡（AI 第一人称扮演的角色）。返回完整 memory。
     """
     username = session["username"]
     data = request.get_json(force=True, silent=True) or {}
     op = str(data.get("op") or "")
-    if op not in ("add", "update", "delete"):
+    if op not in ("add", "update", "delete", "set-main"):
         return jsonify({"error": "无效操作"}), 400
     mem = storage.set_session_cards_item(
         username, sid, op,

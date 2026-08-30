@@ -213,16 +213,40 @@ function renderMemoryCards() {
   const selected = cards.find((c) => c.id === MEMORY_CARD_SELECTED) || null;
 
   // 列表：一角色一项，点击选中编辑；当前选中的高亮
+  // 主角色卡（main=true）：AI 第一人称扮演的角色，带 ★ 标记；允许没有任何主角色
+  const mainId = (cards.find((c) => c.main) || {}).id || null;
   list.innerHTML = "";
   cards.forEach((c) => {
+    // ★ 星标规则：主角色始终显示（主题色）；非主角色未选中时隐藏，选中后显示淡灰色
+    // 星标本身即切换按钮：点非主角色的星标设为主角色；点主角色的星标取消（允许置空）
+    const isSelected = selected && c.id === selected.id;
+    const isMain = c.id === mainId;
     const item = document.createElement("div");
-    item.className = "memory-card-item" + (selected && c.id === selected.id ? " selected" : "");
+    item.className = "memory-card-item" + (isSelected ? " selected" : "");
+    const star = document.createElement("button");
+    star.type = "button";
+    star.className = "memory-card-item-star"
+      + (isMain ? " is-main is-clickable" : (isSelected ? " is-dim is-clickable" : " is-hidden"));
+    star.innerHTML = svgIcon("star");
+    star.title = isMain ? "取消主角色（置空后 AI 不固定扮演任何角色）"
+      : (isSelected ? "设为主角色（AI 第一人称扮演的角色）" : "");
+    if (isSelected) {
+      star.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const r = await cardsItemOp("set-main", isMain ? { id: "" } : { id: c.id });
+        if (r) {
+          renderMemoryCards();
+          showToast(isMain ? "已取消主角色" : "已设为主角色");
+        }
+      });
+    }
+    item.appendChild(star);
     const name = document.createElement("span");
     name.className = "memory-card-item-name";
     name.textContent = c.name || "未命名";
     name.title = c.content ? c.content.slice(0, 80) : "（空卡）";
     item.appendChild(name);
-    if (selected && c.id === selected.id) {
+    if (isSelected) {
       const del = document.createElement("button");
       del.className = "memory-card-item-del";
       del.type = "button";

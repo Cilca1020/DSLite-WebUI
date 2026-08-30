@@ -882,9 +882,33 @@ body {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
   color: var(--accent);
 }
+/* 主角色标记：SVG 星标（assets/svg/star.svg），主角色常显主题色；非主角色选中时淡灰可点击，未选中隐藏 */
+.memory-card-item-star {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: default;
+  flex: none;
+}
+.memory-card-item-star svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+.memory-card-item-star.is-main { color: var(--accent); }
+.memory-card-item-star.is-dim { color: color-mix(in srgb, var(--text-sidebar-dim) 40%, transparent); }
+.memory-card-item-star.is-hidden { display: none; }
+.memory-card-item-star.is-clickable { cursor: pointer; }
+.memory-card-item-star.is-clickable:hover { color: var(--accent); }
 /* 新建入口：虚线胶囊，始终排在列表最右侧 */
 .memory-card-item-new {
   border-style: dashed;
+  border-color: color-mix(in srgb, var(--text-sidebar-dim) 55%, var(--input-border));
   background: transparent;
   color: var(--text-sidebar-dim);
   font-family: inherit;

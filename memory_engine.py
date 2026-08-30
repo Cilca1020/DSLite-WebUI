@@ -118,9 +118,13 @@ def build_context(username, sid, user_messages, data=None, params=None, stored_m
             layers.append({"role": _WORLD_ROLE, "content": _world_block(world)})
 
     # ① 核心设定：人物卡（多角色，一角色一卡，无条件逐卡注入，优先级最高）
-    for card in (memory or {}).get("cards") or []:
-        if str(card.get("content", "")).strip():
-            layers.append({"role": _CARD_ROLE, "content": _card_block(card)})
+    # 主角色卡（main=True）获得「你就是TA」的身份断言；允许没有任何主角色
+    # （此时所有卡均按其他角色处理）；其余卡作为配角/用户扮演对象注入，不要求模型代入。
+    all_cards = [c for c in (memory or {}).get("cards") or [] if str(c.get("content", "")).strip()]
+    main_id = next((c.get("id") for c in all_cards if c.get("main")), None)
+    has_main = main_id is not None
+    for card in all_cards:
+        layers.append({"role": _CARD_ROLE, "content": _card_block(card, is_main=(card.get("id") == main_id), has_main=has_main)})
 
     # ② 动态关键事实（开关开启时无条件注入）
     facts = (memory or {}).get("facts") or []
@@ -149,12 +153,38 @@ def _world_block(world):
     return f"【世界设定（用户导入，必须始终遵守）】\n{content}"
 
 
-def _card_block(card):
+def _card_block(card, is_main=True, has_main=True):
+    """人物卡注入块。
+
+    is_main=True（主角色卡）：追加「你就是TA」第一人称身份断言，禁止出戏；
+    is_main=False（其他角色卡）：仅要求剧情中保持其人设，不要求模型代入，
+    避免多卡时身份断言互相矛盾；has_main=False（无主角色）时措辞不提「第一人称身份」。
+    """
     name = (card.get("name") or "").strip()
     content = card.get("content", "")
+    shown_name = f"「{name}」" if name else "该角色"
+    if is_main:
+        assert_line = (
+            f"（你必须完全代入并扮演{shown_name}：以其身份、口吻第一人称思考和言行，"
+            "始终保持人设一致；不承认自己是AI、助手或程序，不跳出角色、不进行旁白式解释。"
+            "若本设定与其它指令冲突，以本设定为准。）"
+        )
+    elif has_main:
+        who = "用户方扮演的角色" if not name else f"「{name}」"
+        assert_line = (
+            f"（{who}是剧情中的其他角色，不是你当前的第一人称身份。"
+            "剧情中如需让TA出场，请按上述设定保持TA的人设与说话风格，"
+            "但不要代入TA的立场代替用户发言。）"
+        )
+    else:
+        who = "此角色" if not name else f"「{name}」"
+        assert_line = (
+            f"（{who}是剧情中的角色设定。剧情中如需让TA出场，"
+            "请按上述设定保持TA的人设与说话风格，但不要代替用户发言。）"
+        )
     if name:
-        return f"【角色设定：{name}（必须始终遵守）】\n{content}"
-    return f"【核心设定（用户导入，必须始终遵守）】\n{content}"
+        return f"【角色设定：{name}（必须始终遵守）】\n{content}\n{assert_line}"
+    return f"【核心设定（用户导入，必须始终遵守）】\n{content}\n{assert_line}"
 
 
 def _facts_block(facts):
@@ -266,10 +296,12 @@ def _truncate_long(chat, model=None, params=None):
 # ------------------------- 记忆维护：动态关键事实 -------------------------
 
 _FACT_EXTRACT_SYS = (
-    "你是一个角色扮演剧情的记忆助手。请阅读用户与助手的对话片段，"
+    "你是一个角色扮演剧情的记忆助手。请阅读对话片段，"
     "从中抽取【必须长期记住的关键事实】。这类事实指：角色身份变化、称呼/改名、"
     "人际关系变化（如恋爱、结仇、结盟）、关键剧情节点、重要专有名词与设定、"
     "已经确认发生的重要事件。忽略临时性的寒暄、描述性细节、情绪化表达。\n"
+    "【重要】叙述事实时用对话中出现的名字或「用户」「对方」指代说话者，"
+    "禁止使用「AI」「助手」「模型」「人工智能」等字眼，以免破坏角色扮演的代入感。\n"
     "输出格式：每行一条，用「- 」开头，简洁陈述句。不要编号，不要解释，"
     "不要输出任何其他内容。若没有值得记住的事实，输出「无」。"
 )
@@ -280,7 +312,9 @@ _FACT_MERGE_SYS = (
     "1. 新增事实加入；已有事实如有变化用新表述覆盖旧的；已被剧情推翻的事实删除。\n"
     "2. 【最重要】把语义相同或高度相似的事实合并成一条（只保留信息最完整、最新的一条），"
     "绝不允许保留多条只是措辞略有差异、但实质相同的条目。\n"
-    "3. 输出格式：每条一行，以「- 」开头，简洁陈述句。只输出合并后的最终清单，"
+    "3. 【重要】叙述事实时用对话中出现的名字或「用户」「对方」指代说话者，"
+    "禁止使用「AI」「助手」「模型」「人工智能」等字眼。\n"
+    "4. 输出格式：每条一行，以「- 」开头，简洁陈述句。只输出合并后的最终清单，"
     "不要解释、不要编号、不要输出任何其他内容。"
 )
 
@@ -399,7 +433,9 @@ _SUMMARY_SLICE_SYS = (
     "3. 【重要】忽略低价值内容：纯粹的重复性/机械性操作（如反复测试、翻页、寒暄、"
     "无信息量的确认性回复）、流水账式的逐条罗列。若片段只有这类内容而无实质剧情推进，"
     "应给出最简短的概括（例如「双方进行了若干轮常规交互，无实质剧情变化」），不要逐条记录。\n"
-    "4. 用第三人称、陈述句，控制在 200 字以内。只输出摘要正文，不要标题、不要解释。"
+    "4. 用第三人称、陈述句，控制在 200 字以内。只输出摘要正文，不要标题、不要解释。\n"
+    "5. 【重要】叙述时用对话中出现的名字或「用户」「对方」指代说话者，"
+    "禁止使用「AI」「助手」「模型」「人工智能」等字眼，以免破坏角色扮演的代入感。"
 )
 
 _SUMMARY_MERGE_SYS = (
@@ -411,7 +447,9 @@ _SUMMARY_MERGE_SYS = (
     "2. 只保留【对剧情有实质影响】的内容；忽略低价值的重复性/机械性操作（反复测试、翻页、"
     "寒暄、无信息量的确认回复等），不要逐条罗列这类流水账。\n"
     "3. 保留剧情连续性与关键节点；删除已被后续剧情覆盖的过时信息。\n"
-    "4. 用第三人称、陈述句，控制在 500 字以内。只输出摘要正文，不要标题、不要解释。"
+    "4. 用第三人称、陈述句，控制在 500 字以内。只输出摘要正文，不要标题、不要解释。\n"
+    "5. 【重要】叙述时用对话中出现的名字或「用户」「对方」指代说话者，"
+    "禁止使用「AI」「助手」「模型」「人工智能」等字眼；若旧摘要中出现这类字眼，一并替换掉。"
 )
 
 
