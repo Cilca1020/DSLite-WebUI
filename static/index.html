@@ -242,11 +242,11 @@
         <section class="settings-group" id="memorySystemGroup">
           <h3>⓪ 系统提示词</h3>
           <textarea id="system_prompt" rows="4" placeholder="设定模型的基础行为、语气、规则与世界观…"></textarea>
-          <span class="param-hint">作为系统消息随每次请求最先注入（位于核心设定之前），按会话单独保存。</span>
+          <span class="param-hint">在这里规定LLM的行为边界与输出格式，不随剧情推进而改变。</span>
           <div class="param-field">
             <label for="memoryContextN">最近 N 轮对话</label>
             <input id="memoryContextN" type="number" min="0" max="1000" step="1" />
-            <span class="param-hint">保留最近 N 轮对话（一轮 = 一次提问 + 一次回答），修改后自动保存。N = 0 表示全量模式：按模型窗口尽量保留（窗口能塞多少塞多少）。N 只决定原始对话窗口大小，与下方各卡片是否启用无关。</span>
+            <span class="param-hint">保留最近 N 轮对话（一轮 = 一次提问 + 一次回答）。<br>N = 0 表示全量模式，按模型窗口尽可能多地保留，但会增加token消耗。</span>
           </div>
         </section>
 
@@ -266,7 +266,7 @@
             <button id="memoryWorldExportBtn" class="mini-btn" type="button">导出</button>
           </div>
           <input id="memoryWorldImportFile" type="file" accept=".json,.txt,.md,.markdown,.yaml,.yml" hidden />
-          <span class="param-hint">世界卡描述世界观与背景设定，全部随每次请求无条件注入（位于人物卡之前）。每张卡一个设定，点击列表编辑（失焦自动保存）；导入支持 JSON（{name, content} / 数组 / {worlds:[...]}）与纯文本文件，导出全部世界卡为 JSON。</span>
+          <span class="param-hint">在这里描述世界观与背景设定。点击列表中的世界卡进行编辑。<br>导入支持 JSON（{name, content} / 数组 / {worlds:[...]}）与纯文本文件。</span>
 
           <!-- 人物卡：多角色，一角色一卡；在世界卡之后注入 -->
           <h4 class="memory-sub-title memory-sub-title-sep">人物卡</h4>
@@ -280,7 +280,7 @@
             <button id="memoryCardExportBtn" class="mini-btn" type="button">导出</button>
           </div>
           <input id="memoryCardImportFile" type="file" accept=".json,.txt,.md,.markdown,.yaml,.yml" hidden />
-          <span class="param-hint">每个角色一张卡，全部随每次请求无条件注入（位于世界卡之后）。点击列表中的角色进行编辑（失焦自动保存）；导入支持 JSON（{name, content} 或数组）与纯文本文件，导出全部卡片为 JSON。</span>
+          <span class="param-hint">在这里描述人物设定。点击列表中的角色卡进行编辑。<br>导入支持 JSON（{name, content} 或数组）与纯文本文件。</span>
         </section>
 
         <!-- ② 动态关键事实 -->
@@ -302,7 +302,7 @@
               <span class="switch-track"><span class="switch-thumb"></span></span>
             </label>
           </div>
-          <span class="param-hint memory-sub-hint">开启时每轮对话后自动抽取事实并去重合并；关闭后不再自动抽取，仅支持手动增删改与「重新总结」。</span>
+          <span class="param-hint memory-sub-hint">开启时每轮对话后由LLM自动抽取事实并去重，关闭后仅支持「重新总结」和手动编辑。</span>
           <div id="memoryFactsList" class="memory-facts-list"></div>
           <div class="memory-fact-add">
             <input id="memoryFactAddInput" type="text" placeholder="手动添加一条事实…" maxlength="200" />
@@ -311,7 +311,7 @@
           <div class="memory-actions">
             <button id="memoryFactsRefreshBtn" class="mini-btn" type="button">重新总结</button>
           </div>
-          <span class="param-hint">开启「自动总结」时每轮对话后自动抽取重要设定并去重合并；关闭后仅支持手动增删改与「重新总结」从全部历史重新抽取（需已填写 API Key）。条目可手动增删改，按住左侧手柄拖拽调整顺序（注入顺序 = 列表顺序）；上锁（🔒）的条目不会被重新总结覆盖。关闭总开关后保留已抽事实但不注入、不维护。</span>
+          <span class="param-hint">在这里存储随时间变化的重要信息，用户可手动修正。<br>按住左侧手柄拖拽来调整顺序；上锁的条目不会被「重新总结」覆盖。</span>
         </section>
 
         <!-- ③ 剧情摘要 -->
@@ -333,7 +333,7 @@
               <span class="switch-track"><span class="switch-thumb"></span></span>
             </label>
           </div>
-          <span class="param-hint memory-sub-hint">开启时按「自动间隔」自动总结剧情进展；关闭后不再自动总结，仅支持手动「重新总结」，两个数值输入不再生效。</span>
+          <span class="param-hint memory-sub-hint">开启时由LLM按「自动间隔」自动总结剧情进展；关闭后仅支持「重新总结」和手动编辑。</span>
           <textarea id="memorySummaryText" class="memory-summary-text" rows="5" placeholder="暂无摘要。可直接编辑（失焦自动保存），或点击「重新总结」从全部历史生成。"></textarea>
           <div class="memory-summary-meta" id="memorySummaryMeta"></div>
           <div class="memory-actions">
@@ -347,7 +347,7 @@
             </label>
             <button id="memorySummaryRunBtn" class="mini-btn" type="button">重新总结</button>
           </div>
-          <span class="param-hint">摘要按切片轮数分段总结剧情进展，随每次请求注入；自动间隔 = 每 N 轮触发一次自动总结，0 = 关闭自动总结（仅手动）。摘要可直接编辑（失焦自动保存，清空并失焦 = 清除摘要）；「重新总结」从全部历史重新生成并覆盖；关闭开关后保留已总结文本但不注入、不自动/手动总结。</span>
+          <span class="param-hint">在这里存储对话内容梗概。<br>自动间隔 = 每 N 轮触发一次自动总结，0 = 关闭自动总结（仅手动）。</span>
         </section>
 
         <!-- ④ 向量记忆 -->
@@ -364,12 +364,12 @@
           <div class="param-field">
             <label>向量化模型</label>
             <div id="vmModelBox" class="vm-model-box"></div>
-            <span class="param-hint">长对话检索用的本地模型（后端 models 目录）；设置随当前对话单独保存，新建对话默认关闭。关闭开关后保留模型与参数配置但不再检索，卡片内容置灰不可编辑。</span>
+            <span class="param-hint">长对话检索具体对话细节用的本地模型（后端 models 目录）。</span>
           </div>
           <div class="param-field vm-collapsible" id="vmTopKField">
             <label for="vmTopK">召回数量 Top K</label>
             <input id="vmTopK" type="number" min="0" max="500" step="1" />
-            <span class="param-hint">0 = 自动召回（按相似度阈值不限数量）；&gt;0 = 固定返回前 N 条相似记忆（上限 500）。</span>
+            <span class="param-hint">0 = 自动召回（按相似度阈值，不限数量）；&gt;0 = 固定返回前 N 条相似记忆（上限 500）。</span>
           </div>
         </section>
       </div>
