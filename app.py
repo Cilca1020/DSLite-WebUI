@@ -463,6 +463,8 @@ def _spawn_memory_maintenance(api_key, sid, username):
 
 def _log_context(sid, messages):
     """把实际发给 LLM 的完整上下文打印到控制台，便于观察四层记忆注入效果。"""
+    if not config.LOG_CONTEXT:
+        return
     total_chars = sum(len(m.get("content", "")) for m in messages)
     print("\n" + "=" * 72, flush=True)
     print(f"[上下文] session={sid or '-'} 共 {len(messages)} 条，总字符 {total_chars}", flush=True)
