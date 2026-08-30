@@ -2,7 +2,8 @@
  *
  * 层级顺序（与后端注入顺序一致）：
  *   ⓪ 系统提示词        —— 无条件注入，作为 system 消息最先发送
- *   ① 人物卡（cards）   —— 无条件注入，多角色一卡，随每次请求作为 system 前缀
+ *   ① 核心设定          —— 世界卡（worlds，先注入）+ 人物卡（cards），
+ *                          均无条件注入，随每次请求作为 system 前缀
  *   ② 动态关键事实      —— 无条件注入，自动抽取 + 可手动触发
  *   ③ 剧情摘要          —— 无条件注入，增量总结 + 可手动触发
  *   ④ 向量记忆          —— 按需召回，检索相似历史片段
@@ -20,6 +21,7 @@ const memEl = (id) => document.getElementById(id);
 function resetMemoryPanel() {
   MEMORY_STATE = null;
   MEMORY_CARD_SELECTED = null;
+  MEMORY_WORLD_SELECTED = null;
   const empty = memEl("memoryEmptyHint");
   if (empty) empty.classList.remove("hidden");
   const bar = memEl("memoryMasterBar");
@@ -62,7 +64,8 @@ async function loadMemoryPanel() {
 function renderMemoryPanel() {
   const mem = MEMORY_STATE || {};
 
-  // ① 人物卡（多角色）：渲染列表 + 编辑器；本地选中态在重渲染后保持
+  // ① 核心设定：世界卡（先） + 人物卡（后）；本地选中态在重渲染后保持
+  renderMemoryWorlds();
   renderMemoryCards();
 
   // ② 动态关键事实
@@ -372,6 +375,217 @@ function bindMemoryCards() {
   }
 }
 
+/* ---------------- 世界卡（① 核心设定·世界卡，先于人物卡注入） ---------------- */
+
+// 世界卡模块本地状态：当前在编辑器中打开的卡 id
+let MEMORY_WORLD_SELECTED = null;
+
+// 会话世界卡列表
+function sessionWorlds() {
+  const mem = MEMORY_STATE || {};
+  return Array.isArray(mem.worlds) ? mem.worlds : [];
+}
+
+// 世界卡条目操作 API（增删改）
+async function worldsItemOp(op, extra = {}) {
+  if (!currentSessionId) { showToast("请先选择对话"); return null; }
+  try {
+    const r = await apiPost("/api/sessions/" + currentSessionId + "/worlds-item", Object.assign({ op }, extra));
+    if (r && r.error) { showToast(r.error); return null; }
+    if (r && r.memory) MEMORY_STATE = r.memory;
+    return r;
+  } catch (_) {
+    showToast("操作失败");
+    return null;
+  }
+}
+
+// 添加世界卡：建一张空卡并打开编辑（入口为列表末尾「+ 新建」）
+async function addNewWorld() {
+  const r = await worldsItemOp("add", { name: "", content: "" });
+  if (r) {
+    const worlds = sessionWorlds();
+    MEMORY_WORLD_SELECTED = worlds.length ? worlds[worlds.length - 1].id : null;
+    renderMemoryWorlds();
+    const nameInput = memEl("memoryWorldName");
+    if (nameInput) nameInput.focus();
+  }
+}
+
+// ① 渲染世界卡列表 + 编辑器（选中态跨重渲染保持）
+function renderMemoryWorlds() {
+  const worlds = sessionWorlds();
+  const list = memEl("memoryWorldsList");
+  const editor = memEl("memoryWorldEditor");
+  if (!list || !editor) return;
+
+  // 选中卡若已被删除则回落到第一张
+  if (MEMORY_WORLD_SELECTED && !worlds.some((w) => w.id === MEMORY_WORLD_SELECTED)) {
+    MEMORY_WORLD_SELECTED = null;
+  }
+  if (!MEMORY_WORLD_SELECTED && worlds.length) MEMORY_WORLD_SELECTED = worlds[0].id;
+  const selected = worlds.find((w) => w.id === MEMORY_WORLD_SELECTED) || null;
+
+  // 列表：一张卡一项，点击选中编辑；当前选中的高亮
+  list.innerHTML = "";
+  worlds.forEach((w) => {
+    const item = document.createElement("div");
+    item.className = "memory-card-item" + (selected && w.id === selected.id ? " selected" : "");
+    const name = document.createElement("span");
+    name.className = "memory-card-item-name";
+    name.textContent = w.name || "未命名";
+    name.title = w.content ? w.content.slice(0, 80) : "（空卡）";
+    item.appendChild(name);
+    if (selected && w.id === selected.id) {
+      const del = document.createElement("button");
+      del.className = "memory-card-item-del";
+      del.type = "button";
+      // 叉号用 SVG 绘制，避免字形垂直偏移导致的不对齐
+      del.innerHTML =
+        '<svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">' +
+        '<path d="M1.5 1.5 L8.5 8.5 M8.5 1.5 L1.5 8.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg>';
+      del.title = "删除该世界卡";
+      del.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        if (!confirm("删除世界卡「" + (w.name || "未命名") + "」？")) return;
+        const r = await worldsItemOp("delete", { id: w.id });
+        if (r) {
+          MEMORY_WORLD_SELECTED = null;
+          renderMemoryWorlds();
+          showToast("已删除");
+        }
+      });
+      item.appendChild(del);
+    }
+    item.addEventListener("click", () => {
+      if (MEMORY_WORLD_SELECTED === w.id) return;
+      MEMORY_WORLD_SELECTED = w.id;
+      renderMemoryWorlds();
+    });
+    list.appendChild(item);
+  });
+  if (!worlds.length) {
+    const empty = document.createElement("div");
+    empty.className = "memory-cards-empty";
+    empty.textContent = "暂无世界卡，点击「+ 新建」或「导入」创建。";
+    list.appendChild(empty);
+  }
+
+  // 新建入口：始终排在列表最右侧（+ 图标 + 新建）
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "memory-card-item memory-card-item-new";
+  add.title = "新建世界卡";
+  const plus = document.createElement("span");
+  plus.className = "memory-card-item-plus";
+  plus.textContent = "+";
+  const addLabel = document.createElement("span");
+  addLabel.className = "memory-card-item-name";
+  addLabel.textContent = "新建";
+  add.appendChild(plus);
+  add.appendChild(addLabel);
+  add.addEventListener("click", () => addNewWorld());
+  list.appendChild(add);
+
+  // 编辑器：只展示当前选中的卡
+  const nameInput = memEl("memoryWorldName");
+  const contentInput = memEl("memoryWorldContent");
+  if (!selected) {
+    editor.classList.add("hidden");
+    if (nameInput) nameInput.value = "";
+    if (contentInput) contentInput.value = "";
+    return;
+  }
+  editor.classList.remove("hidden");
+  if (nameInput && document.activeElement !== nameInput) nameInput.value = selected.name || "";
+  if (contentInput && document.activeElement !== contentInput) contentInput.value = selected.content || "";
+}
+
+// ① 世界卡：添加 / 导入 / 导出 / 编辑器失焦自动保存
+function bindMemoryWorlds() {
+  const nameInput = memEl("memoryWorldName");
+  const contentInput = memEl("memoryWorldContent");
+
+  const saveSelected = async (field) => {
+    const selected = sessionWorlds().find((w) => w.id === MEMORY_WORLD_SELECTED);
+    if (!selected || !currentSessionId) return;
+    const name = nameInput ? nameInput.value : selected.name;
+    const content = contentInput ? contentInput.value : selected.content;
+    if (name === selected.name && content === selected.content) return; // 无变化不保存
+    if (field) field.disabled = true;
+    const r = await worldsItemOp("update", { id: selected.id, name, content });
+    if (field) field.disabled = false;
+    if (r) {
+      renderMemoryWorlds();
+      showToast("世界卡已保存");
+    }
+  };
+  if (nameInput) nameInput.addEventListener("change", () => saveSelected(nameInput));
+  if (contentInput) contentInput.addEventListener("change", () => saveSelected(contentInput));
+
+  // 导入：JSON（{name,content} / 数组 / {worlds:[...]}) 或纯文本；全部作为新卡追加
+  const importBtn = memEl("memoryWorldImportBtn");
+  const fileInput = memEl("memoryWorldImportFile");
+  if (importBtn && fileInput) {
+    importBtn.onclick = () => fileInput.click();
+    fileInput.addEventListener("change", async () => {
+      const file = fileInput.files && fileInput.files[0];
+      fileInput.value = "";
+      if (!file || !currentSessionId) return;
+      let text = "";
+      try { text = await file.text(); } catch (_) { return showToast("读取文件失败"); }
+      // 识别内容：JSON 对象/数组优先，失败则整个文件当纯文本正文
+      let imported = null; // [{name, content}]
+      const baseName = file.name.replace(/\.[^.]+$/, "");
+      try {
+        const data = JSON.parse(text);
+        const arr = Array.isArray(data) ? data : (Array.isArray(data.worlds) ? data.worlds : [data]);
+        imported = arr
+          .map((w) => ({
+            name: String((w && w.name) || "").trim(),
+            content: String((w && (w.content || w.text || w.card)) || "").trim(),
+          }))
+          .filter((w) => w.content);
+      } catch (_) { /* 非 JSON，按纯文本处理 */ }
+      if (!imported || !imported.length) {
+        const content = text.trim();
+        if (!content) return showToast("文件为空");
+        imported = [{ name: baseName, content }];
+      }
+      // 逐卡追加（name 缺省用文件名）
+      let lastId = null;
+      for (const w of imported) {
+        const r = await worldsItemOp("add", { name: w.name || baseName, content: w.content });
+        if (!r) return;
+        const worlds = sessionWorlds();
+        lastId = worlds.length ? worlds[worlds.length - 1].id : null;
+      }
+      MEMORY_WORLD_SELECTED = lastId;
+      renderMemoryWorlds();
+      showToast("已导入 " + imported.length + " 张世界卡");
+    });
+  }
+
+  // 导出：全部世界卡打包为 JSON 下载
+  const exportBtn = memEl("memoryWorldExportBtn");
+  if (exportBtn) {
+    exportBtn.onclick = () => {
+      const worlds = sessionWorlds().filter((w) => w.content);
+      if (!worlds.length) return showToast("没有可导出的世界卡");
+      const payload = {
+        exported_at: new Date().toISOString(),
+        worlds: worlds.map((w) => ({ name: w.name || "未命名", content: w.content })),
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "世界卡-" + (worlds.length === 1 ? (worlds[0].name || "未命名") : "全部") + ".json";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    };
+  }
+}
+
 // ② 动态关键事实：条目级操作 API（增删改 / 上锁解锁）
 async function factsItemOp(op, index, extra = {}) {
   if (!currentSessionId) { showToast("请先选择对话"); return null; }
@@ -389,18 +603,18 @@ async function factsItemOp(op, index, extra = {}) {
   }
 }
 
-// 小图标按钮（锁 / 编辑 / 删除）
+// 小图标按钮（拖动手柄 / 锁 / 编辑 / 删除）；onClick 可省略（纯手柄按钮）
 function factIconBtn(title, svgPath, onClick) {
   const btn = document.createElement("button");
   btn.className = "fact-icon-btn";
   btn.type = "button";
   btn.title = title;
   btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + svgPath + "</svg>";
-  btn.addEventListener("click", onClick);
+  if (onClick) btn.addEventListener("click", onClick);
   return btn;
 }
 
-// ② 渲染事实条目列表：每条带 上锁/编辑/删除 操作
+// ② 渲染事实条目列表：每条带 拖动手柄(拖拽排序)/上锁/编辑/删除 操作
 function renderFacts() {
   const mem = MEMORY_STATE || {};
   const facts = Array.isArray(mem.facts) ? mem.facts : [];
@@ -414,14 +628,60 @@ function renderFacts() {
     factsList.appendChild(p);
     return;
   }
+  const GRIP_SVG = '<circle cx="9" cy="5" r="1.3"/><circle cx="15" cy="5" r="1.3"/><circle cx="9" cy="12" r="1.3"/><circle cx="15" cy="12" r="1.3"/><circle cx="9" cy="19" r="1.3"/><circle cx="15" cy="19" r="1.3"/>';
   const LOCK_SVG = '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>';               // 闭锁
   const UNLOCK_SVG = '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.9-.9"/>';            // 开锁
   const EDIT_SVG = '<path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>';
   const DEL_SVG = '<path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>';
+  // 清理所有拖拽过程中的标记（源条目置灰 + 放置指示线）
+  const clearDropMarks = () => {
+    factsList.querySelectorAll(".fact-dragging, .fact-drop-before, .fact-drop-after").forEach((el) => {
+      el.classList.remove("fact-dragging", "fact-drop-before", "fact-drop-after");
+    });
+  };
   facts.forEach((f, i) => {
     const locked = !!(f && f.locked);
     const row = document.createElement("div");
     row.className = "memory-fact-row" + (locked ? " fact-locked" : "");
+
+    // 拖动手柄：按住可整行拖拽排序（桌面端）
+    const grip = factIconBtn("拖动排序", GRIP_SVG);
+    grip.className += " memory-fact-grip";
+    grip.draggable = true;
+    grip.addEventListener("dragstart", (ev) => {
+      ev.dataTransfer.effectAllowed = "move";
+      ev.dataTransfer.setData("text/plain", String(i));
+      try { ev.dataTransfer.setDragImage(row, 16, 16); } catch (_) { /* 个别浏览器不支持时忽略 */ }
+      row.classList.add("fact-dragging");
+    });
+    grip.addEventListener("dragend", clearDropMarks);
+    // 放置目标：悬停在条目上半部分=插入其前，下半部分=插入其后
+    row.addEventListener("dragover", (ev) => {
+      if (!ev.dataTransfer || !ev.dataTransfer.types || !Array.from(ev.dataTransfer.types).includes("text/plain")) return;
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = "move";
+      const r = row.getBoundingClientRect();
+      const before = ev.clientY < r.top + r.height / 2;
+      row.classList.toggle("fact-drop-before", before);
+      row.classList.toggle("fact-drop-after", !before);
+    });
+    row.addEventListener("dragleave", (ev) => {
+      if (ev.relatedTarget && row.contains(ev.relatedTarget)) return; // 仍在行内（子元素间）移动时不清理
+      row.classList.remove("fact-drop-before", "fact-drop-after");
+    });
+    row.addEventListener("drop", (ev) => {
+      if (!ev.dataTransfer) return;
+      ev.preventDefault();
+      const from = parseInt(ev.dataTransfer.getData("text/plain"), 10);
+      if (!Number.isInteger(from) || from < 0 || from >= facts.length || from === i) { clearDropMarks(); return; }
+      const r = row.getBoundingClientRect();
+      const before = ev.clientY < r.top + r.height / 2;
+      let to = before ? i : i + 1;
+      if (from < to) to -= 1;   // 源条目在前：弹出后目标下标左移一位
+      clearDropMarks();
+      if (to === from) return;  // 位置未变，不发请求
+      factsItemOp("move", from, { to });
+    });
 
     const idx = document.createElement("span");
     idx.className = "memory-fact-index";
@@ -435,10 +695,12 @@ function renderFacts() {
     actions.className = "memory-fact-actions";
 
     // 上锁/解锁：即时生效；图标显示当前状态（锁定=闭锁，未锁=开锁），悬停提示为动作
-    actions.appendChild(factIconBtn(locked ? "解锁（重新总结时可被更新）" : "上锁（不被重新总结覆盖）", locked ? LOCK_SVG : UNLOCK_SVG, async (e) => {
+    const lockBtn = factIconBtn(locked ? "解锁（重新总结时可被更新）" : "上锁（不被重新总结覆盖）", locked ? LOCK_SVG : UNLOCK_SVG, async (e) => {
       const r = await factsItemOp("lock", i, { locked: !locked });
       if (r) showToast(!locked ? "已上锁" : "已解锁");
-    }));
+    });
+    lockBtn.classList.add("fact-lock-btn");
+    actions.appendChild(lockBtn);
 
     // 编辑：文本变输入框，Enter/失焦保存，Esc 取消
     actions.appendChild(factIconBtn("编辑", EDIT_SVG, () => {
@@ -472,6 +734,7 @@ function renderFacts() {
       if (r) showToast("已删除");
     }));
 
+    row.appendChild(grip);
     row.appendChild(idx);
     row.appendChild(text);
     row.appendChild(actions);
@@ -815,6 +1078,7 @@ function bindMemoryCardSwitches() {
 /* ---------------- 初始化 ---------------- */
 
 function initMemoryPanel() {
+  bindMemoryWorlds();
   bindMemoryCards();
   bindFactAdd();
   bindMemoryFacts();

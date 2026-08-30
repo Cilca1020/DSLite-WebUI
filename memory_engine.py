@@ -4,7 +4,7 @@
 无条件或按需注入上下文：
 
     [system prompt]
-    [① 核心设定卡]   用户导入（粘贴/文件），静态常驻，可跨会话复用
+    [① 核心设定]     世界卡（世界观/背景，先注入）+ 人物卡（角色设定），均静态常驻
     [② 动态关键事实] LLM 自动抽取 + 手动增删，随剧情增量更新（改名/恋爱等）
     [③ 剧情摘要]     LLM 切片分段滚动总结，n（切片宽度）可调，自动+手动触发
     [④ 向量检索片段] 按需召回对话细节（复用 vector_memory 机制）
@@ -33,8 +33,9 @@ import storage
 import vector_memory
 
 # 各层在拼接消息时的 role
-# ① 核心设定卡 / ② 动态关键事实 / ③ 剧情摘要：用 system role（背景性内容，
-# 优先级高于对话）；④ 向量检索片段沿用其原始 role（user/assistant）。
+# ① 核心设定（世界卡 / 人物卡）/ ② 动态关键事实 / ③ 剧情摘要：用 system role
+# （背景性内容，优先级高于对话）；④ 向量检索片段沿用其原始 role（user/assistant）。
+_WORLD_ROLE = "system"
 _CARD_ROLE = "system"
 _FACTS_ROLE = "system"
 _SUMMARY_ROLE = "system"
@@ -111,7 +112,12 @@ def build_context(username, sid, user_messages, data=None, params=None, stored_m
 
     layers = []
 
-    # ① 人物卡（多角色，一角色一卡，无条件逐卡注入，优先级最高）
+    # ① 核心设定：世界卡（多张，一卡一世界观设定，无条件逐卡注入，先于人物卡）
+    for world in (memory or {}).get("worlds") or []:
+        if str(world.get("content", "")).strip():
+            layers.append({"role": _WORLD_ROLE, "content": _world_block(world)})
+
+    # ① 核心设定：人物卡（多角色，一角色一卡，无条件逐卡注入，优先级最高）
     for card in (memory or {}).get("cards") or []:
         if str(card.get("content", "")).strip():
             layers.append({"role": _CARD_ROLE, "content": _card_block(card)})
@@ -133,6 +139,14 @@ def build_context(username, sid, user_messages, data=None, params=None, stored_m
 
     # 合并：① ② ③（背景层，system role）在前，④+最近窗口（对话层）在后
     return layers + history
+
+
+def _world_block(world):
+    name = (world.get("name") or "").strip()
+    content = world.get("content", "")
+    if name:
+        return f"【世界设定：{name}（必须始终遵守）】\n{content}"
+    return f"【世界设定（用户导入，必须始终遵守）】\n{content}"
 
 
 def _card_block(card):

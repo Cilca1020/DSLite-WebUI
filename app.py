@@ -13,6 +13,8 @@
   POST /api/sessions/cleanup   -> 删除空会话 ({"exclude": 当前会话id})
   POST /api/sessions/<id>/msg  -> 向会话追加一条消息（非流式，存历史用）
   DELETE /api/sessions/<id>/msg/<index> -> 删除会话中第 index 条消息（不含 system）
+  POST /api/sessions/<id>/cards-item  -> 人物卡条目操作（add/update/delete）
+  POST /api/sessions/<id>/worlds-item -> 世界卡条目操作（add/update/delete）
   GET  /api/presets            -> 参数预设列表
   POST /api/presets            -> 保存预设
   DELETE /api/presets/<name>   -> 删除预设
@@ -325,7 +327,7 @@ def _truncate_long(user_messages, model=None, params=None):
 def _build_chat_context(user_messages, sid, data, username=None, params=None):
     """拼接发给模型的对话上下文（四层记忆引擎）。
 
-    - ① 核心设定卡 / ② 动态关键事实 / ③ 剧情摘要：无条件常驻（会话 memory 列）。
+    - ① 核心设定（世界卡 + 人物卡）/ ② 动态关键事实 / ③ 剧情摘要：无条件常驻（会话 memory 列）。
     - ④ 向量记忆：按需召回细节（沿用旧前端 vector_memory 开关参数，兼容阶段二前的前端）。
     - 关闭 / 无 session_id：退化为纯最近窗口截断。
     """
@@ -478,6 +480,8 @@ def _log_context(sid, messages):
             cur = "vector"
         elif src == "recent":
             cur = "recent"
+        elif content.startswith("【世界设定"):
+            cur = "world"
         elif content.startswith("【核心设定") or content.startswith("【角色设定"):
             cur = "card"
         elif content.startswith("【当前剧情中的关键事实"):
@@ -493,7 +497,8 @@ def _log_context(sid, messages):
                 # 上一个区块结束
                 print("  " + "-" * 68, flush=True)
             headers = {
-                "card":   "▼ ① 核心设定卡（无条件常驻）",
+                "world":  "▼ ① 核心设定·世界卡（无条件常驻）",
+                "card":   "▼ ① 核心设定·人物卡（无条件常驻）",
                 "facts":  "▼ ② 动态关键事实（无条件常驻）",
                 "summary":"▼ ③ 剧情摘要（无条件常驻）",
                 "vector": "▼ ④ 向量记忆检索片段（按需召回）",
@@ -558,6 +563,30 @@ def api_cards_item(sid):
     return jsonify({"memory": mem})
 
 
+@app.route("/api/sessions/<sid>/worlds-item", methods=["POST"])
+def api_worlds_item(sid):
+    """世界卡列表条目操作（多张，一卡一世界观设定，先于人物卡注入）。
+
+    body: {"op": "add|update|delete", "id": "...", "name": "...", "content": "..."}
+    add：新建卡（name/content 可为空）；update：按 id 更新 name/content（传哪个更新哪个）；
+    delete：按 id 删除。返回完整 memory。
+    """
+    username = session["username"]
+    data = request.get_json(force=True, silent=True) or {}
+    op = str(data.get("op") or "")
+    if op not in ("add", "update", "delete"):
+        return jsonify({"error": "无效操作"}), 400
+    mem = storage.set_session_worlds_item(
+        username, sid, op,
+        world_id=str(data.get("id") or "") or None,
+        name=data.get("name"),
+        content=data.get("content"),
+    )
+    if mem is None:
+        return jsonify({"error": "会话不存在"}), 404
+    return jsonify({"memory": mem})
+
+
 @app.route("/api/sessions/<sid>/facts", methods=["POST"])
 def api_set_facts(sid):
     """整体覆盖动态关键事实。body: {"facts": [{"text": "...", "ts": ..., "locked": bool}]}。"""
@@ -576,11 +605,13 @@ def api_set_facts(sid):
 def api_facts_item(sid):
     """关键事实条目级操作（增删改 / 上锁解锁）。
 
-    body: {"op": "add"|"update"|"delete"|"lock", "index": int, "text": str, "locked": bool}
+    body: {"op": "add"|"update"|"delete"|"lock"|"move", "index": int, "text": str, "locked": bool, "to": int}
     - add:    追加一条 {"text", "locked"}（index 忽略）
     - update: 修改 index 处文本（上锁条目也可手动改，锁只防重新生成）
     - delete: 删除 index 处条目（上锁条目也可手动删）
     - lock:   设置 index 处 locked 标记（locked=true 上锁 / false 解锁）
+    - move:   把 index 处条目移动到 to 处（to 为新列表中的目标下标，先弹出再插入；
+              拖动排序与 ↑↓ 按钮均基于此实现）
     """
     username = session["username"]
     data = request.get_json(force=True, silent=True) or {}
@@ -615,6 +646,20 @@ def api_facts_item(sid):
         if not in_range:
             return jsonify({"error": "索引越界"}), 400
         facts[idx]["locked"] = bool(data.get("locked", True))
+    elif op == "move":
+        if not in_range:
+            return jsonify({"error": "索引越界"}), 400
+        try:
+            to = int(data.get("to"))
+        except (TypeError, ValueError):
+            to = idx  # 缺省视为不动
+        # to 为新列表中的目标下标：先弹出再插入；越界就近收拢到两端
+        if to < 0:
+            to = 0
+        elif to >= len(facts):
+            to = len(facts) - 1
+        item = facts.pop(idx)
+        facts.insert(to, item)
     else:
         return jsonify({"error": "未知操作"}), 400
 

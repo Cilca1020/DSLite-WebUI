@@ -224,7 +224,7 @@
     </div>
     </div><!-- /settingsPageParams -->
 
-    <!-- 记忆页：按记忆层级顺序放置卡片 ⓪系统提示词 ①人物卡 ②动态关键事实 ③剧情摘要 ④向量记忆 -->
+    <!-- 记忆页：按记忆层级顺序放置卡片 ⓪系统提示词 ①核心设定(世界卡+人物卡) ②动态关键事实 ③剧情摘要 ④向量记忆 -->
     <div class="settings-page hidden" id="settingsPageMemory">
       <div class="settings-body">
         <!-- 顶部批量操作：一键配置（打开 2/3/4 开关并恢复默认值） / 关闭智能总结（关闭 2/3/4，0/1 继续生效） -->
@@ -242,7 +242,7 @@
         <section class="settings-group" id="memorySystemGroup">
           <h3>⓪ 系统提示词</h3>
           <textarea id="system_prompt" rows="4" placeholder="设定模型的基础行为、语气、规则与世界观…"></textarea>
-          <span class="param-hint">作为系统消息随每次请求最先注入（位于人物卡之前），按会话单独保存。</span>
+          <span class="param-hint">作为系统消息随每次请求最先注入（位于核心设定之前），按会话单独保存。</span>
           <div class="param-field">
             <label for="memoryContextN">最近 N 轮对话</label>
             <input id="memoryContextN" type="number" min="0" max="1000" step="1" />
@@ -250,9 +250,26 @@
           </div>
         </section>
 
-        <!-- ① 人物卡（多角色，一角色一卡） -->
+        <!-- ① 核心设定（世界卡 + 人物卡，均无条件注入；世界卡在前） -->
         <section class="settings-group" id="memoryCardGroup">
-          <h3>① 人物卡</h3>
+          <h3>① 核心设定</h3>
+
+          <!-- 世界卡：多张，一卡一世界观设定；先于人物卡注入 -->
+          <h4 class="memory-sub-title">世界卡</h4>
+          <div id="memoryWorldsList" class="memory-cards-list"></div>
+          <div id="memoryWorldEditor" class="memory-card-editor hidden">
+            <input id="memoryWorldName" type="text" placeholder="世界/设定名称（可选，用于列表显示与导出）" maxlength="50" />
+            <textarea id="memoryWorldContent" rows="6" placeholder="写下世界观设定（时代背景、地理、势力、规则、力量体系…），编辑后失焦自动保存"></textarea>
+          </div>
+          <div class="memory-actions">
+            <button id="memoryWorldImportBtn" class="mini-btn" type="button">导入</button>
+            <button id="memoryWorldExportBtn" class="mini-btn" type="button">导出</button>
+          </div>
+          <input id="memoryWorldImportFile" type="file" accept=".json,.txt,.md,.markdown,.yaml,.yml" hidden />
+          <span class="param-hint">世界卡描述世界观与背景设定，全部随每次请求无条件注入（位于人物卡之前）。每张卡一个设定，点击列表编辑（失焦自动保存）；导入支持 JSON（{name, content} / 数组 / {worlds:[...]}）与纯文本文件，导出全部世界卡为 JSON。</span>
+
+          <!-- 人物卡：多角色，一角色一卡；在世界卡之后注入 -->
+          <h4 class="memory-sub-title memory-sub-title-sep">人物卡</h4>
           <div id="memoryCardsList" class="memory-cards-list"></div>
           <div id="memoryCardEditor" class="memory-card-editor hidden">
             <input id="memoryCardName" type="text" placeholder="角色名（可选，用于列表显示与导出）" maxlength="50" />
@@ -263,7 +280,7 @@
             <button id="memoryCardExportBtn" class="mini-btn" type="button">导出</button>
           </div>
           <input id="memoryCardImportFile" type="file" accept=".json,.txt,.md,.markdown,.yaml,.yml" hidden />
-          <span class="param-hint">每个角色一张卡，全部随每次请求无条件注入。点击列表中的角色进行编辑（失焦自动保存）；导入支持 JSON（{name, content} 或数组）与纯文本文件，导出全部卡片为 JSON。</span>
+          <span class="param-hint">每个角色一张卡，全部随每次请求无条件注入（位于世界卡之后）。点击列表中的角色进行编辑（失焦自动保存）；导入支持 JSON（{name, content} 或数组）与纯文本文件，导出全部卡片为 JSON。</span>
         </section>
 
         <!-- ② 动态关键事实 -->
@@ -294,7 +311,7 @@
           <div class="memory-actions">
             <button id="memoryFactsRefreshBtn" class="mini-btn" type="button">重新总结</button>
           </div>
-          <span class="param-hint">开启「自动总结」时每轮对话后自动抽取重要设定并去重合并；关闭后仅支持手动增删改与「重新总结」从全部历史重新抽取（需已填写 API Key）。条目可手动增删改；上锁（🔒）的条目不会被重新总结覆盖。关闭总开关后保留已抽事实但不注入、不维护。</span>
+          <span class="param-hint">开启「自动总结」时每轮对话后自动抽取重要设定并去重合并；关闭后仅支持手动增删改与「重新总结」从全部历史重新抽取（需已填写 API Key）。条目可手动增删改，按住左侧手柄拖拽调整顺序（注入顺序 = 列表顺序）；上锁（🔒）的条目不会被重新总结覆盖。关闭总开关后保留已抽事实但不注入、不维护。</span>
         </section>
 
         <!-- ③ 剧情摘要 -->

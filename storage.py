@@ -91,6 +91,7 @@ def _migrate_vm_to_memory(conn):
 def _default_memory():
     """会话四层记忆的默认结构。"""
     return {
+        "worlds": [],      # 世界卡列表 [{"id","name","content","updated_at"}]，先于人物卡注入
         "cards": [],       # 人物卡列表 [{"id","name","content","updated_at"}]，一角色一卡
         "facts": [],       # 动态关键事实 [{"text","ts"}]
         "facts_enabled": True,  # ② 动态关键事实开关（关闭时保留内容但停止注入/维护）
@@ -158,6 +159,18 @@ def _parse_memory(raw):
             }
             for f in raw["facts"] if isinstance(f, dict) and str(f.get("text", "")).strip()
         ]
+    # 世界卡列表（多张，一卡一世界观设定，先于人物卡注入）。
+    mem["worlds"] = []
+    if isinstance(raw.get("worlds"), list):
+        for w in raw["worlds"]:
+            if not isinstance(w, dict):
+                continue
+            mem["worlds"].append({
+                "id": str(w.get("id") or uuid.uuid4().hex),
+                "name": str(w.get("name") or "").strip(),
+                "content": str(w.get("content", "")).strip(),
+                "updated_at": float(w.get("updated_at") or 0),
+            })
     mem["facts_enabled"] = bool(raw.get("facts_enabled", True))
     mem["facts_auto"] = bool(raw.get("facts_auto", True))  # ② 自动总结开关（总开关的下一级）
     s = raw.get("summary")
@@ -508,6 +521,47 @@ def set_session_cards_item(username, sid, op, card_id=None, name=None, content=N
             return memory
     elif op == "delete":
         memory["cards"] = [c for c in cards if c.get("id") != card_id]
+    else:
+        return memory
+    save_session_memory(username, sid, memory)
+    return memory
+
+
+def set_session_worlds_item(username, sid, op, world_id=None, name=None, content=None):
+    """世界卡列表条目操作（多张，一卡一世界观设定）。
+
+    op:
+      "add"    新建卡（name/content 可为空），返回带 id 的新 memory
+      "update" 按 world_id 更新 name / content（传哪个更新哪个）
+      "delete" 按 world_id 删除
+    返回新 memory 或 None（会话不存在 / update|delete 找不到卡返回原 memory）。
+    """
+    memory = get_session_memory(username, sid)
+    if memory is None:
+        return None
+    worlds = memory.get("worlds") or []
+    if op == "add":
+        worlds = worlds + [{
+            "id": uuid.uuid4().hex,
+            "name": (name or "").strip(),
+            "content": (content or "").strip(),
+            "updated_at": time.time(),
+        }]
+        memory["worlds"] = worlds
+    elif op == "update":
+        for w in worlds:
+            if w.get("id") == world_id:
+                if name is not None:
+                    w["name"] = name.strip()
+                if content is not None:
+                    w["content"] = content.strip()
+                w["updated_at"] = time.time()
+                memory["worlds"] = worlds
+                break
+        else:
+            return memory
+    elif op == "delete":
+        memory["worlds"] = [w for w in worlds if w.get("id") != world_id]
     else:
         return memory
     save_session_memory(username, sid, memory)

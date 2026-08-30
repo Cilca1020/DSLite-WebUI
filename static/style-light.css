@@ -721,7 +721,7 @@ body {
 .memory-sub-switch {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px; /* 标签与开关之间留足间距；开关与下方说明保持小间距（上大下小） */
   cursor: pointer;
   margin: 0;
 }
@@ -735,6 +735,9 @@ body {
   display: block;
   margin: 0 0 8px;
 }
+/* 系统提示词板块的说明文字：与下方「最近 N 轮对话」标签留出间距
+   （输入框与提示之间的上间距保持全局默认 4px，不额外加大） */
+#memorySystemGroup > .param-hint { margin-bottom: 10px; }
 .memory-head-right {
   display: inline-flex;
   align-items: center;
@@ -783,6 +786,7 @@ body {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end; /* 导入/导出/重新总结等操作按钮右对齐 */
   gap: 8px;
   margin: 4px 0 8px;
 }
@@ -803,6 +807,20 @@ body {
   background: var(--field-bg);
   color: var(--field-text);
 }
+/* 核心设定下的小节标题（世界卡 / 人物卡） */
+.memory-sub-title {
+  margin: 16px 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--label-color);
+  letter-spacing: 0.5px;
+}
+/* 第二个小节（人物卡）：上方虚线分隔，与世界卡视觉区分 */
+.memory-sub-title-sep {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--input-border);
+}
 .memory-facts-list {
   max-height: 220px;
   overflow-y: auto;
@@ -815,6 +833,7 @@ body {
 .memory-cards-list {
   display: flex;
   flex-wrap: wrap;
+  align-items: center; /* 空提示文本与「+ 新建」按钮垂直居中对齐 */
   gap: 6px;
   padding: 2px 0;
 }
@@ -952,9 +971,23 @@ body {
 }
 .fact-icon-btn svg { width: 14px; height: 14px; }
 .fact-icon-btn:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+/* 拖动排序手柄：整行拖拽的抓手 */
+.memory-fact-grip {
+  flex: none;
+  cursor: grab;
+  touch-action: none;
+  color: var(--text-sidebar-dim);
+  opacity: 0.55;
+}
+.memory-fact-grip:hover { background: transparent; color: var(--text-sidebar-dim); opacity: 1; }
+.memory-fact-grip:active { cursor: grabbing; }
+/* 拖拽中的源条目置灰 + 放置指示线（插入点提示） */
+.memory-fact-row.fact-dragging { opacity: 0.35; }
+.memory-fact-row.fact-drop-before { box-shadow: inset 0 2px 0 0 var(--accent); }
+.memory-fact-row.fact-drop-after { box-shadow: inset 0 -2px 0 0 var(--accent); }
 /* 上锁条目：主题色描边 + 锁定图标高亮 */
 .memory-fact-row.fact-locked { border-color: color-mix(in srgb, var(--accent) 55%, var(--input-border)); }
-.memory-fact-row.fact-locked .fact-icon-btn:first-child { color: var(--accent); opacity: 1; }
+.memory-fact-row.fact-locked .fact-lock-btn { color: var(--accent); opacity: 1; }
 /* 行内编辑输入框 */
 .memory-fact-edit {
   flex: 1;
