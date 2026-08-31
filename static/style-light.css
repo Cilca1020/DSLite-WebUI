@@ -398,6 +398,15 @@ body {
 .mini-btn svg { width: 14px; height: 14px; }
 .mini-btn span { margin-left: 4px; }
 
+/* 主题色强调按钮（如记忆卡的「重新总结」） */
+.mini-btn.accent {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+.mini-btn.accent:hover { background: var(--accent-hover); }
+.mini-btn.accent:disabled { background: var(--accent-disabled); border-color: var(--accent-disabled); }
+
 /* 向量记忆设置：模型选择区 */
 .vm-model-box {
   display: flex;

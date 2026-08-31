@@ -102,10 +102,6 @@ function renderMemoryPanel() {
   if (sliceInput && summary.slice_rounds !== undefined && summary.slice_rounds !== null) {
     sliceInput.value = summary.slice_rounds;
   }
-  const autoInput = memEl("memorySummaryAuto");
-  if (autoInput && summary.auto_rounds !== undefined && summary.auto_rounds !== null) {
-    autoInput.value = summary.auto_rounds;
-  }
 
   // ④ 向量记忆：模型/开关/N 由 applyVmToUI 管理，这里同步 top_k 输入框
   const vec = mem.vector || {};
@@ -152,14 +148,12 @@ function refreshMemoryCardStates() {
   if (summarySwitch) summarySwitch.checked = summaryEnabled;
   const summaryGroup = memEl("memorySummaryGroup");
   if (summaryGroup) summaryGroup.classList.toggle("memory-off", !summaryEnabled);
-  // 自动总结开关（总开关下一级）：默认开启；关闭时两个数值输入置灰不可编辑
+  // 自动总结开关（总开关下一级）：默认开启；关闭时切片轮数输入置灰不可编辑
   const summaryAutoSwitch = memEl("memorySummaryAutoSwitch");
   const summaryAutoOn = summary.auto !== false;
   if (summaryAutoSwitch) summaryAutoSwitch.checked = summaryAutoOn;
   const summarySlice = memEl("memorySummarySlice");
   if (summarySlice) summarySlice.disabled = !summaryAutoOn;
-  const summaryAutoRounds = memEl("memorySummaryAuto");
-  if (summaryAutoRounds) summaryAutoRounds.disabled = !summaryAutoOn;
 
   // ④ 向量记忆：开关由 main.js / chat.js（vmEnabled）管理，这里按可见开关态同步置灰与 top_k 禁用态
   const vectorSwitch = memEl("vmEnabled");
@@ -907,16 +901,6 @@ function bindMemorySummary() {
       saveSummaryConfig(body, sliceInput);
     });
   }
-  const autoRoundsInput = memEl("memorySummaryAuto");
-  if (autoRoundsInput) {
-    autoRoundsInput.addEventListener("change", () => {
-      const v = parseInt(autoRoundsInput.value, 10);
-      if (isNaN(v)) return loadMemoryPanel(); // 无效输入回读
-      const body = { auto_rounds: Math.max(0, Math.min(1000, v)) };
-      autoRoundsInput.value = body.auto_rounds;
-      saveSummaryConfig(body, autoRoundsInput);
-    });
-  }
 
   // 摘要文本：编辑后失焦自动保存；清空并失焦 = 清除摘要（需确认）
   const summaryTextArea = memEl("memorySummaryText");
@@ -1028,8 +1012,6 @@ function bindMemoryMasterButtons() {
         const sCfg = memNew.summary || {};
         const sSlice = memEl("memorySummarySlice");
         if (sSlice && sCfg.slice_rounds != null) sSlice.value = sCfg.slice_rounds;
-        const sAuto = memEl("memorySummaryAuto");
-        if (sAuto && sCfg.auto_rounds != null) sAuto.value = sCfg.auto_rounds;
         refreshMemoryCardStates();
         showToast("一键配置已应用");
       } catch (_) {
@@ -1114,11 +1096,9 @@ function bindMemoryCardSwitches() {
     summaryAutoSwitch.addEventListener("change", async () => {
       if (!currentSessionId) { refreshMemoryCardStates(); return showToast("请先选择对话"); }
       const on = summaryAutoSwitch.checked;
-      // 即时生效：数值输入随开关置灰/恢复
+      // 即时生效：切片轮数输入随开关置灰/恢复
       const sliceInput = memEl("memorySummarySlice");
       if (sliceInput) sliceInput.disabled = !on;
-      const autoInput = memEl("memorySummaryAuto");
-      if (autoInput) autoInput.disabled = !on;
       MEMORY_STATE = MEMORY_STATE || {};
       MEMORY_STATE.summary = Object.assign({}, MEMORY_STATE.summary || {}, { auto: on });
       try {

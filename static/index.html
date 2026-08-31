@@ -317,7 +317,7 @@
               <span>每片上限</span>
               <input id="memoryFactsLimit" type="number" min="0" max="50" step="1" />
             </label>
-            <button id="memoryFactsRefreshBtn" class="mini-btn" type="button">重新总结</button>
+            <button id="memoryFactsRefreshBtn" class="mini-btn accent" type="button">重新总结</button>
           </div>
           <span class="param-hint">在这里存储随时间变化的重要信息，用户可手动修正。<br>按住左侧手柄拖拽来调整顺序；上锁的条目不会被「重新总结」覆盖。<br>每片上限 = 每个切片最多抽取的事实条数，0 = 不限制。</span>
         </section>
@@ -335,13 +335,13 @@
           </h3>
           <!-- 自动总结开关：卡片总开关的下一级；关闭时后台不自动总结，仅手动 -->
           <div class="memory-sub-row">
-            <label class="memory-sub-switch" title="开启时按「自动间隔」自动总结剧情；关闭后仅支持手动「重新总结」">
+            <label class="memory-sub-switch" title="开启时每积累一个完整切片自动总结剧情；关闭后仅支持手动「重新总结」">
               <span class="memory-sub-label">自动总结</span>
               <input id="memorySummaryAutoSwitch" type="checkbox" checked />
               <span class="switch-track"><span class="switch-thumb"></span></span>
             </label>
           </div>
-          <span class="param-hint memory-sub-hint">开启时由LLM按「自动间隔」自动总结剧情进展；关闭后仅支持「重新总结」和手动编辑。</span>
+          <span class="param-hint memory-sub-hint">开启时每积累一个完整切片（切片轮数轮）自动总结剧情进展；关闭后仅支持「重新总结」和手动编辑。</span>
           <textarea id="memorySummaryText" class="memory-summary-text" rows="5" placeholder="暂无摘要。可直接编辑（失焦自动保存），或点击「重新总结」从全部历史生成。"></textarea>
           <div class="memory-summary-meta" id="memorySummaryMeta"></div>
           <div class="memory-actions">
@@ -349,13 +349,9 @@
               <span>切片轮数</span>
               <input id="memorySummarySlice" type="number" min="1" max="200" step="1" />
             </label>
-            <label class="memory-num-field">
-              <span>自动间隔（轮）</span>
-              <input id="memorySummaryAuto" type="number" min="0" max="1000" step="1" />
-            </label>
-            <button id="memorySummaryRunBtn" class="mini-btn" type="button">重新总结</button>
+            <button id="memorySummaryRunBtn" class="mini-btn accent" type="button">重新总结</button>
           </div>
-          <span class="param-hint">在这里存储对话内容梗概。<br>自动间隔 = 每 N 轮触发一次自动总结，0 = 关闭自动总结（仅手动）。</span>
+          <span class="param-hint">在这里存储对话内容梗概。<br>每积累一个完整切片（切片轮数轮）自动总结一次；关闭自动总结后仅手动。</span>
         </section>
 
         <!-- ④ 向量记忆 -->

@@ -207,15 +207,14 @@ def _parse_memory(raw):
 def _parse_summary(s):
     """规范化剧情摘要结构。接收 dict 或 None；缺省返回带默认配置的结构。
 
-    结构：{text, summarized_ts, last_round, slice_rounds, auto_rounds}
-    slice_rounds / auto_rounds 为用户可设置的触发参数，缺省回退到 config 默认。
+    结构：{text, summarized_ts, last_round, slice_rounds}
+    slice_rounds 为用户可设置的切片宽度；自动总结以切片为单位（每积累一个完整切片触发一次）。
     """
     default = {
         "text": "",
         "summarized_ts": None,
         "last_round": 0,
         "slice_rounds": config.SUMMARY_SLICE_ROUNDS,
-        "auto_rounds": config.SUMMARY_AUTO_ROUNDS,
         "enabled": True,  # ③ 剧情摘要开关（关闭时保留内容但停止注入/自动/手动总结）
         "auto": True,     # ③ 自动总结开关（总开关下一级；关闭时后台不自动总结，仅手动）
     }
@@ -237,12 +236,6 @@ def _parse_summary(s):
     try:
         v = int(s.get("slice_rounds"))
         out["slice_rounds"] = max(1, min(v, 200))
-    except (TypeError, ValueError):
-        pass  # 保留默认
-    # 自动触发阈值：>=0（0 表示仅手动）
-    try:
-        v = int(s.get("auto_rounds"))
-        out["auto_rounds"] = max(0, min(v, 1000))
     except (TypeError, ValueError):
         pass  # 保留默认
     return out
@@ -657,7 +650,7 @@ def set_session_facts(username, sid, facts, last_round=None):
 
 def set_session_summary(username, sid, text, last_round=None):
     """写入剧情摘要。text 为空则清除。last_round 为已总结到的对话轮次（计数）。
-    保留已有的用户配置（slice_rounds / auto_rounds）。返回新 memory 或 None。"""
+    保留已有的用户配置（slice_rounds）。返回新 memory 或 None。"""
     memory = get_session_memory(username, sid)
     if memory is None:
         return None
@@ -669,7 +662,6 @@ def set_session_summary(username, sid, text, last_round=None):
             "summarized_ts": time.time(),
             "last_round": last_round if last_round is not None else old.get("last_round", 0),
             "slice_rounds": old.get("slice_rounds"),
-            "auto_rounds": old.get("auto_rounds"),
             "enabled": old.get("enabled", True),
             "auto": old.get("auto", True),
         }
@@ -679,8 +671,8 @@ def set_session_summary(username, sid, text, last_round=None):
     return memory
 
 
-def set_session_summary_config(username, sid, slice_rounds=None, auto_rounds=None, enabled=None):
-    """设置会话剧情摘要的触发参数（slice_rounds 切片宽度 / auto_rounds 自动触发阈值 / enabled 开关）。
+def set_session_summary_config(username, sid, slice_rounds=None, enabled=None):
+    """设置会话剧情摘要的触发参数（slice_rounds 切片宽度 / enabled 开关）。
 
     只更新传入的参数，其余保留。返回新 memory 或 None（会话不存在）。
     """
@@ -693,13 +685,6 @@ def set_session_summary_config(username, sid, slice_rounds=None, auto_rounds=Non
         try:
             s = dict(s)
             s["slice_rounds"] = max(1, min(int(slice_rounds), 200))
-            changed = True
-        except (TypeError, ValueError):
-            pass
-    if auto_rounds is not None:
-        try:
-            s = dict(s)
-            s["auto_rounds"] = max(0, min(int(auto_rounds), 1000))
             changed = True
         except (TypeError, ValueError):
             pass
@@ -750,7 +735,6 @@ def set_session_memory_switches(username, sid, facts_enabled=None, summary_enabl
         memory["facts_max_per_slice"] = config.FACT_MAX_PER_SLICE  # 每片抽取上限恢复默认
         s = dict(memory.get("summary") or {})
         s["slice_rounds"] = config.SUMMARY_SLICE_ROUNDS
-        s["auto_rounds"] = config.SUMMARY_AUTO_ROUNDS
         memory["summary"] = _parse_summary(s)
         vec = dict(memory.get("vector") or _parse_vm(None))
         vec["top_k"] = None          # 恢复默认召回

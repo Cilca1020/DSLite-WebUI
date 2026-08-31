@@ -614,10 +614,10 @@ def _count_rounds(chat):
 
 
 def should_auto_summary(username, sid, stored_msgs=None):
-    """判断是否达到自动总结阈值（距上次总结新增轮数 >= auto_rounds）。
+    """判断是否达到自动总结阈值（以切片为单位）。
 
-    阈值优先读会话 memory.summary.auto_rounds（用户可设置），回退到
-    config.SUMMARY_AUTO_ROUNDS；auto_rounds=0 表示关闭自动总结（仅手动）。
+    每积累一个完整切片（新增轮数 >= summary.slice_rounds）触发一次自动总结。
+    切片宽度优先读会话 memory.summary.slice_rounds，回退 config.SUMMARY_SLICE_ROUNDS。
     剧情摘要开关或自动总结开关（summary.auto）关闭时一律不触发。
     """
     memory = _get_memory(username, sid)
@@ -630,15 +630,13 @@ def should_auto_summary(username, sid, stored_msgs=None):
     # 自动总结开关（总开关下一级）关闭：后台不自动总结，仅手动
     if not summary.get("auto", True):
         return False
-    auto_rounds = summary.get("auto_rounds")
-    if auto_rounds is None:
-        auto_rounds = config.SUMMARY_AUTO_ROUNDS
+    slice_rounds = summary.get("slice_rounds")
     try:
-        auto_rounds = int(auto_rounds)
+        slice_rounds = int(slice_rounds)
     except (TypeError, ValueError):
-        auto_rounds = config.SUMMARY_AUTO_ROUNDS
-    if auto_rounds <= 0:
-        return False
+        slice_rounds = 0
+    if slice_rounds <= 0:
+        slice_rounds = config.SUMMARY_SLICE_ROUNDS
     stored = stored_msgs if stored_msgs is not None else (
         storage.get_session(username, sid).get("messages", []) if storage.get_session(username, sid) else []
     )
@@ -648,7 +646,7 @@ def should_auto_summary(username, sid, stored_msgs=None):
     ]
     total_rounds = _count_rounds(chat)
     last_round = int(summary.get("last_round") or 0)
-    return (total_rounds - last_round) >= auto_rounds
+    return (total_rounds - last_round) >= slice_rounds
 
 
 def extract_facts_for_session(api_key, username, sid, stored_msgs, full=False, auto=True):
