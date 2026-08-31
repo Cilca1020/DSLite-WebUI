@@ -41,7 +41,7 @@ SUPPORTED_MODELS = [
 
 # 调试开关：在控制台打印实际发给 LLM 的完整上下文（含各记忆层注入边界）。
 # 默认关闭；排查记忆注入问题时可临时改为 True。
-LOG_CONTEXT = False
+LOG_CONTEXT = True
 
 # 默认推理参数（前端初始值也来自这里）
 DEFAULT_PARAMS = {
