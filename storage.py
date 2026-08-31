@@ -184,14 +184,16 @@ def _parse_memory(raw):
         mem["facts_last_round"] = max(0, int(raw.get("facts_last_round") or 0))
     except (TypeError, ValueError):
         mem["facts_last_round"] = 0
-    try:
-        mem["facts_slice_rounds"] = max(1, min(200, int(raw.get("facts_slice_rounds") or 0)))
-    except (TypeError, ValueError):
-        mem["facts_slice_rounds"] = config.FACT_SLICE_ROUNDS
-    try:
-        mem["facts_max_per_slice"] = max(0, min(50, int(raw.get("facts_max_per_slice") or 0)))
-    except (TypeError, ValueError):
-        mem["facts_max_per_slice"] = config.FACT_MAX_PER_SLICE
+    if raw.get("facts_slice_rounds") is not None and str(raw.get("facts_slice_rounds")).strip() != "":
+        try:
+            mem["facts_slice_rounds"] = max(1, min(200, int(raw["facts_slice_rounds"])))
+        except (TypeError, ValueError):
+            pass  # 无效值保留默认
+    if raw.get("facts_max_per_slice") is not None and str(raw.get("facts_max_per_slice")).strip() != "":
+        try:
+            mem["facts_max_per_slice"] = max(0, min(50, int(raw["facts_max_per_slice"])))
+        except (TypeError, ValueError):
+            pass  # 无效值保留默认
     s = raw.get("summary")
     mem["summary"] = _parse_summary(s) if s is not None else None
     vec_cfg = raw.get("vector") if isinstance(raw.get("vector"), dict) else raw.get("vm")
