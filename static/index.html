@@ -309,9 +309,17 @@
             <button id="memoryFactAddBtn" class="mini-btn" type="button">添加</button>
           </div>
           <div class="memory-actions">
+            <label class="memory-num-field">
+              <span>切片轮数</span>
+              <input id="memoryFactsSlice" type="number" min="1" max="200" step="1" />
+            </label>
+            <label class="memory-num-field">
+              <span>每片上限</span>
+              <input id="memoryFactsLimit" type="number" min="0" max="50" step="1" />
+            </label>
             <button id="memoryFactsRefreshBtn" class="mini-btn" type="button">重新总结</button>
           </div>
-          <span class="param-hint">在这里存储随时间变化的重要信息，用户可手动修正。<br>按住左侧手柄拖拽来调整顺序；上锁的条目不会被「重新总结」覆盖。</span>
+          <span class="param-hint">在这里存储随时间变化的重要信息，用户可手动修正。<br>按住左侧手柄拖拽来调整顺序；上锁的条目不会被「重新总结」覆盖。<br>每片上限 = 每个切片最多抽取的事实条数，0 = 不限制。</span>
         </section>
 
         <!-- ③ 剧情摘要 -->

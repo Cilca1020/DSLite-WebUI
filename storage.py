@@ -94,6 +94,9 @@ def _default_memory():
         "worlds": [],      # 世界卡列表 [{"id","name","content","updated_at"}]，先于人物卡注入
         "cards": [],       # 人物卡列表 [{"id","name","content","updated_at"}]，一角色一卡
         "facts": [],       # 动态关键事实 [{"text","ts"}]
+        "facts_last_round": 0,  # 事实抽取进度（已处理到的轮次，切片抽取用）
+        "facts_slice_rounds": config.FACT_SLICE_ROUNDS,  # ② 事实切片宽度（轮），与会话摘要切片分开
+        "facts_max_per_slice": config.FACT_MAX_PER_SLICE,  # ② 每片最多抽取条数（0 = 不限制）
         "facts_enabled": True,  # ② 动态关键事实开关（关闭时保留内容但停止注入/维护）
         "facts_auto": True,     # ② 自动总结开关（总开关下一级；关闭时不触发后台抽取，仅手动）
         "summary": None,   # 剧情摘要 {"text","summarized_ts","last_round","enabled",...}
@@ -177,6 +180,18 @@ def _parse_memory(raw):
             })
     mem["facts_enabled"] = bool(raw.get("facts_enabled", True))
     mem["facts_auto"] = bool(raw.get("facts_auto", True))  # ② 自动总结开关（总开关的下一级）
+    try:
+        mem["facts_last_round"] = max(0, int(raw.get("facts_last_round") or 0))
+    except (TypeError, ValueError):
+        mem["facts_last_round"] = 0
+    try:
+        mem["facts_slice_rounds"] = max(1, min(200, int(raw.get("facts_slice_rounds") or 0)))
+    except (TypeError, ValueError):
+        mem["facts_slice_rounds"] = config.FACT_SLICE_ROUNDS
+    try:
+        mem["facts_max_per_slice"] = max(0, min(50, int(raw.get("facts_max_per_slice") or 0)))
+    except (TypeError, ValueError):
+        mem["facts_max_per_slice"] = config.FACT_MAX_PER_SLICE
     s = raw.get("summary")
     mem["summary"] = _parse_summary(s) if s is not None else None
     vec_cfg = raw.get("vector") if isinstance(raw.get("vector"), dict) else raw.get("vm")
@@ -591,12 +606,49 @@ def set_session_worlds_item(username, sid, op, world_id=None, name=None, content
     return memory
 
 
-def set_session_facts(username, sid, facts):
-    """整体覆盖动态关键事实列表。facts 为 [{"text", ...}]，规范化后落库。返回新 memory 或 None。"""
+def set_session_facts_config(username, sid, slice_rounds=None, max_per_slice=None):
+    """设置动态关键事实的抽取配置。
+
+    slice_rounds：切片宽度（轮），None=不更新；max_per_slice：每片最多抽取条数
+    （0 = 不限制），None=不更新。返回新 memory 或 None（会话不存在 / 无有效字段）。
+    """
+    memory = get_session_memory(username, sid)
+    if memory is None:
+        return None
+    updated = False
+    if slice_rounds is not None:
+        try:
+            memory["facts_slice_rounds"] = max(1, min(200, int(slice_rounds)))
+            updated = True
+        except (TypeError, ValueError):
+            pass
+    if max_per_slice is not None:
+        try:
+            memory["facts_max_per_slice"] = max(0, min(50, int(max_per_slice)))
+            updated = True
+        except (TypeError, ValueError):
+            pass
+    if not updated:
+        return memory
+    save_session_memory(username, sid, memory)
+    return memory
+
+
+def set_session_facts(username, sid, facts, last_round=None):
+    """整体覆盖动态关键事实列表。facts 为 [{"text", ...}]，规范化后落库。
+
+    last_round：事实抽取进度（已处理到的轮次）；None 不更新。
+    返回新 memory 或 None。
+    """
     memory = get_session_memory(username, sid)
     if memory is None:
         return None
     memory["facts"] = _parse_memory({"facts": facts, "summary": None, "vector": memory["vector"]})["facts"]
+    if last_round is not None:
+        try:
+            memory["facts_last_round"] = max(0, int(last_round))
+        except (TypeError, ValueError):
+            pass
     save_session_memory(username, sid, memory)
     return memory
 
@@ -692,6 +744,8 @@ def set_session_memory_switches(username, sid, facts_enabled=None, summary_enabl
     if reset_values:
         # 最近 N 轮恢复为 10（用户指定的一键配置值）
         memory["recent_n"] = config.VECTOR_MEMORY_RECENT_N
+        memory["facts_slice_rounds"] = config.FACT_SLICE_ROUNDS  # 事实切片宽度恢复默认
+        memory["facts_max_per_slice"] = config.FACT_MAX_PER_SLICE  # 每片抽取上限恢复默认
         s = dict(memory.get("summary") or {})
         s["slice_rounds"] = config.SUMMARY_SLICE_ROUNDS
         s["auto_rounds"] = config.SUMMARY_AUTO_ROUNDS
@@ -770,6 +824,8 @@ def clear_session_memory_layer(username, sid, layer):
         return None
     if layer in ("cards", "facts", "summary"):
         memory[layer] = []
+        if layer == "facts":
+            memory["facts_last_round"] = 0  # 清空事实同时重置抽取进度
         save_session_memory(username, sid, memory)
     return memory
 

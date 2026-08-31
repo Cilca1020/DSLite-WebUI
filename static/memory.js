@@ -70,6 +70,14 @@ function renderMemoryPanel() {
 
   // ② 动态关键事实
   renderFacts();
+  const factsSlice = memEl("memoryFactsSlice");
+  if (factsSlice && mem.facts_slice_rounds !== undefined && mem.facts_slice_rounds !== null) {
+    factsSlice.value = mem.facts_slice_rounds;
+  }
+  const factsLimit = memEl("memoryFactsLimit");
+  if (factsLimit && mem.facts_max_per_slice !== undefined && mem.facts_max_per_slice !== null) {
+    factsLimit.value = mem.facts_max_per_slice;
+  }
 
   // 最近 N 轮上下文策略
   const recentN = (mem.recent_n !== undefined && mem.recent_n !== null)
@@ -805,6 +813,44 @@ function bindMemoryFacts() {
       btn.textContent = "重新总结";
     }
   };
+  // 切片轮数 / 每片上限：事实抽取配置（与会话摘要的切片互相独立，失焦自动保存）
+  const saveFactsConfig = async (body, input) => {
+    if (!currentSessionId) return;
+    input.disabled = true;
+    try {
+      const r = await apiPost("/api/sessions/" + currentSessionId + "/facts-config", body);
+      if (r && r.error) return showToast(r.error);
+      if (MEMORY_STATE) {
+        MEMORY_STATE.facts_slice_rounds = r.slice_rounds;
+        MEMORY_STATE.facts_max_per_slice = r.max_per_slice;
+      }
+      showToast("已保存");
+    } catch (_) {
+      showToast("保存失败");
+    } finally {
+      input.disabled = false;
+    }
+  };
+  const sliceInput = memEl("memoryFactsSlice");
+  if (sliceInput) {
+    sliceInput.addEventListener("change", () => {
+      const v = parseInt(sliceInput.value, 10);
+      if (isNaN(v)) return loadMemoryPanel(); // 无效输入回读
+      const body = { slice_rounds: Math.max(1, Math.min(200, v)) };
+      sliceInput.value = body.slice_rounds;
+      saveFactsConfig(body, sliceInput);
+    });
+  }
+  const limitInput = memEl("memoryFactsLimit");
+  if (limitInput) {
+    limitInput.addEventListener("change", () => {
+      const v = parseInt(limitInput.value, 10);
+      if (isNaN(v)) return loadMemoryPanel(); // 无效输入回读
+      const body = { max_per_slice: Math.max(0, Math.min(50, v)) };
+      limitInput.value = body.max_per_slice;
+      saveFactsConfig(body, limitInput);
+    });
+  }
 }
 
 // 最近 N 轮：独立上下文保留策略（修改后自动保存）
@@ -973,6 +1019,17 @@ function bindMemoryMasterButtons() {
         if (window.vmSaveN) window.vmSaveN((r.memory || {}).recent_n);
         const en = memEl("vmEnabled");
         if (en) en.checked = true;
+        // 数值输入框同步为新默认值（facts / summary 切片宽度等）
+        const memNew = r.memory || {};
+        const fSlice = memEl("memoryFactsSlice");
+        if (fSlice && memNew.facts_slice_rounds != null) fSlice.value = memNew.facts_slice_rounds;
+        const fLimit = memEl("memoryFactsLimit");
+        if (fLimit && memNew.facts_max_per_slice != null) fLimit.value = memNew.facts_max_per_slice;
+        const sCfg = memNew.summary || {};
+        const sSlice = memEl("memorySummarySlice");
+        if (sSlice && sCfg.slice_rounds != null) sSlice.value = sCfg.slice_rounds;
+        const sAuto = memEl("memorySummaryAuto");
+        if (sAuto && sCfg.auto_rounds != null) sAuto.value = sCfg.auto_rounds;
         refreshMemoryCardStates();
         showToast("一键配置已应用");
       } catch (_) {

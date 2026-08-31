@@ -5,7 +5,7 @@
 
     [system prompt]
     [① 核心设定]     世界卡（世界观/背景，先注入）+ 人物卡（角色设定），均静态常驻
-    [② 动态关键事实] LLM 自动抽取 + 手动增删，随剧情增量更新（改名/恋爱等）
+    [② 动态关键事实] LLM 切片抽取（自动+手动），本地合并去重，随剧情更新（改名/恋爱等）
     [③ 剧情摘要]     LLM 切片分段滚动总结，n（切片宽度）可调，自动+手动触发
     [④ 向量检索片段] 按需召回对话细节（复用 vector_memory 机制）
     [最近 N 轮对话]
@@ -319,9 +319,10 @@ _FACT_MERGE_SYS = (
 )
 
 
-def extract_facts(api_key, old_facts, new_messages):
+def extract_facts(api_key, old_facts, new_messages, limit=None):
     """用 LLM 从新增对话片段抽取关键事实，并合并进旧事实列表。返回新事实列表。
 
+    limit：本次抽取的条数硬上限（写入提示词）；None / <=0 表示不限制。
     任何失败都返回旧事实列表（优雅降级，不抛异常）。
     """
     old_text = "\n".join(f"- {f.get('text', '')}" for f in old_facts if str(f.get("text", "")).strip())
@@ -332,11 +333,17 @@ def extract_facts(api_key, old_facts, new_messages):
     )
     if not new_text.strip():
         return old_facts
+    limit_text = ""
+    try:
+        if limit is not None and int(limit) > 0:
+            limit_text = f"\n【数量上限】本次最多抽取 {int(limit)} 条，宁缺毋滥；拿不准的细节一律不记。"
+    except (TypeError, ValueError):
+        pass
     if old_text.strip():
-        user_msg = f"【已有事实】\n{old_text}\n\n【本轮新增片段】\n{new_text}"
+        user_msg = f"【已有事实】\n{old_text}\n\n【本轮新增片段】\n{new_text}{limit_text}"
         sys_prompt = _FACT_MERGE_SYS
     else:
-        user_msg = f"【对话片段】\n{new_text}"
+        user_msg = f"【对话片段】\n{new_text}{limit_text}"
         sys_prompt = _FACT_EXTRACT_SYS
     try:
         raw = llm_client.chat(
@@ -645,16 +652,20 @@ def should_auto_summary(username, sid, stored_msgs=None):
 
 
 def extract_facts_for_session(api_key, username, sid, stored_msgs, full=False, auto=True):
-    """对会话做一次关键事实抽取，落库并返回新事实列表。
+    """对会话做一次关键事实切片抽取，落库并返回新事实列表。
 
     auto=True（后台自动触发）：需要 facts_enabled（卡片总开关）与 facts_auto
     （自动总结开关）同时开启才执行，任一关闭返回 None。
     auto=False（用户手动触发，如「重新总结」按钮 / 一键刷新）：只看卡片总开关，
     不受自动总结开关影响。
 
-    full=False（默认，增量）：只喂最近若干条对话，结果与旧事实合并去重。
-    full=True（重新总结）：不带旧事实，用纯抽取提示词对全部历史重新生成，
-    生成的新列表【整体替换】旧列表，但上锁条目原样保留（见 _merge_locked_facts）。
+    切片策略（自动 / 手动统一）：把对话按 FACT_SLICE_ROUNDS 轮一块切片，
+    每片独立调用一次纯抽取提示词（不带旧事实，避免同义重复滚雪球），
+    本地去重后与现有列表合并。
+    full=False（增量）：只处理 facts_last_round 之后的新切片，
+    结果并入现有列表并推进进度标记。
+    full=True（重新总结）：忽略进度，对全部历史重新抽取，
+    生成的新列表【整体替换】旧列表，上锁条目原样保留。
 
     失败返回 None（优雅降级，不阻塞主对话）。由调用方决定触发频率。
     """
@@ -679,42 +690,68 @@ def extract_facts_for_session(api_key, username, sid, stored_msgs, full=False, a
     if not chat:
         return None
     facts = memory.get("facts") or []
+    total_rounds = _count_rounds(chat)
+    done_rounds = 0 if full else int(memory.get("facts_last_round") or 0)
+    if done_rounds >= total_rounds:
+        return None  # 没有新内容可抽取
+
+    # 切片宽度（轮数）：会话配置 facts_slice_rounds 优先，回退全局默认
+    try:
+        slice_n = int(memory.get("facts_slice_rounds") or 0)
+    except (TypeError, ValueError):
+        slice_n = 0
+    if slice_n <= 0:
+        slice_n = config.FACT_SLICE_ROUNDS
+    # 每片抽取条数上限（用户可配，0 = 不限制）
+    max_per_slice = memory.get("facts_max_per_slice")
+    try:
+        max_per_slice = int(max_per_slice) if max_per_slice is not None else None
+    except (TypeError, ValueError):
+        max_per_slice = None
+    if max_per_slice is not None and max_per_slice <= 0:
+        max_per_slice = None
+
+    # 找出结束轮次超过进度点的切片（部分重叠的切片整片重抽，靠去重兜底）
+    slices = _slice_chat(chat, slice_n)
+    extracted = []  # [{"text","ts"}]
+    now = time.time()
+    rounds_done = 0
+    for sl in slices:
+        sl_rounds = _count_rounds(sl)
+        start, end = rounds_done, rounds_done + sl_rounds
+        rounds_done = end
+        if end <= done_rounds:
+            continue
+        result = extract_facts(api_key, [], sl, limit=max_per_slice)  # 纯抽取：不带旧事实
+        for f in result or []:
+            t = str(f.get("text", "")).strip()
+            if t:
+                extracted.append({"text": t, "ts": now})
+
+    # 本地合并：full=True 只保留上锁条目做基底（整体替换）；增量则保留现有列表
     if full:
-        # 重新总结：锁定的条目原样保留（不被重新生成影响），
-        # 其余条目不带旧事实、用纯抽取提示词对全部历史重新生成，再与锁定条目去重合并。
-        locked = [f for f in facts if f.get("locked")]
-        regenerated = extract_facts(api_key, [], chat)
-        new_facts = _merge_locked_facts(locked, regenerated)
-        if not new_facts:
-            return None
-        if [f.get("text") for f in new_facts] != [f.get("text") for f in facts]:
-            storage.set_session_facts(username, sid, new_facts)
-            return new_facts
-        return None
-    # 增量：只取最近若干条（覆盖自上次抽取以来的新内容），与旧事实合并去重
-    recent = chat[- max(config.FACT_EXTRACT_EVERY * 2, 6):]
-    new_facts = extract_facts(api_key, facts, recent)
-    if not new_facts:
-        return None
+        base = [f for f in facts if f.get("locked")]
+    else:
+        base = facts
+    new_facts = _merge_facts_lists(base, extracted)
+    # 无论事实是否变化都推进进度，避免下次重复处理旧切片
+    storage.set_session_facts(username, sid, new_facts, last_round=total_rounds)
     if [f.get("text") for f in new_facts] != [f.get("text") for f in facts]:
-        storage.set_session_facts(username, sid, new_facts)
         return new_facts
     return None
 
 
-def _merge_locked_facts(locked, regenerated):
-    """锁定事实（原 ts / locked 标记）优先保留，与重新生成结果去重合并。
-
-    重新生成结果中与锁定条目精确相同或相似的会被丢弃（锁定优先）。
-    """
+def _merge_facts_lists(base, new_items):
+    """本地合并事实列表：base 条目的顺序 / ts / locked 原样保留，
+    new_items 追加去重（精确 + 相似度双重去重），截断至 FACT_MAX。"""
     now = time.time()
-    locked_map = {f.get("text", ""): f for f in locked}
-    reg_map = {f.get("text", ""): f for f in regenerated}
+    base_map = {f.get("text", ""): f for f in base}
+    new_map = {f.get("text", ""): f for f in new_items}
     merged = []
-    for t in _dedup_facts([f.get("text", "") for f in locked] + [f.get("text", "") for f in regenerated]):
-        src = locked_map.get(t)
-        if src:
-            merged.append({"text": t, "ts": src.get("ts", now), "locked": True})
-        else:
-            merged.append({"text": t, "ts": (reg_map.get(t) or {}).get("ts", now)})
+    for t in _dedup_facts([f.get("text", "") for f in base] + [f.get("text", "") for f in new_items]):
+        src = base_map.get(t) or new_map.get(t) or {}
+        item = {"text": t, "ts": src.get("ts", now)}
+        if src.get("locked"):
+            item["locked"] = True
+        merged.append(item)
     return merged[: config.FACT_MAX]

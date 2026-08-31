@@ -738,6 +738,38 @@ def api_summary_config(sid):
     })
 
 
+@app.route("/api/sessions/<sid>/facts-config", methods=["GET", "POST"])
+def api_facts_config(sid):
+    """读取 / 设置动态关键事实的抽取配置。
+
+    GET 返回当前配置；POST body 可选 {"slice_rounds": int（1~200 轮）,
+    "max_per_slice": int（每片最多抽取条数，0 = 不限制）}。
+    """
+    username = session["username"]
+    if request.method == "GET":
+        mem = storage.get_session_memory(username, sid)
+        if mem is None:
+            return jsonify({"error": "会话不存在"}), 404
+        return jsonify({
+            "slice_rounds": mem.get("facts_slice_rounds", config.FACT_SLICE_ROUNDS),
+            "max_per_slice": mem.get("facts_max_per_slice", config.FACT_MAX_PER_SLICE),
+        })
+    data = request.get_json(force=True, silent=True) or {}
+    slice_rounds = data.get("slice_rounds")
+    max_per_slice = data.get("max_per_slice")
+    if slice_rounds is None and max_per_slice is None:
+        return jsonify({"error": "至少提供 slice_rounds / max_per_slice 之一"}), 400
+    mem = storage.set_session_facts_config(
+        username, sid, slice_rounds=slice_rounds, max_per_slice=max_per_slice
+    )
+    if mem is None:
+        return jsonify({"error": "会话不存在"}), 404
+    return jsonify({
+        "slice_rounds": mem.get("facts_slice_rounds", config.FACT_SLICE_ROUNDS),
+        "max_per_slice": mem.get("facts_max_per_slice", config.FACT_MAX_PER_SLICE),
+    })
+
+
 @app.route("/api/sessions/<sid>/summary-text", methods=["POST"])
 def api_summary_text(sid):
     """手动保存编辑后的剧情摘要文本。
