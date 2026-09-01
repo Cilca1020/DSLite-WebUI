@@ -367,13 +367,14 @@ def api_chat():
     # 因此不能在生成器内部访问 flask.session）
     current_username = session.get("username")
 
-    # 组装完整消息：system prompt 在前
+    # 组装完整消息：system prompt 在前（为空时不注入 system 消息）
     try:
         context = _build_chat_context(user_messages, sid, data, current_username, params)
     except vector_memory.VectorMemoryError as e:
         app.logger.error("向量记忆不可用：%s", e)
         return jsonify({"error": f"向量记忆不可用：{e}", "vector_memory_error": True}), 502
-    messages = [{"role": "system", "content": params["system_prompt"]}] + context
+    sys_prompt = (params.get("system_prompt") or "").strip()
+    messages = ([{"role": "system", "content": sys_prompt}] if sys_prompt else []) + context
 
     # 调试日志：打印实际发给 LLM 的完整上下文（含四层记忆注入），方便边跑边验证
     try:
