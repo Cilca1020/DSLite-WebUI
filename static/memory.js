@@ -330,7 +330,7 @@ function bindMemoryCards() {
     if (field) field.disabled = false;
     if (r) {
       renderMemoryCards();
-      showToast("人物卡已保存");
+      showToast("已保存");
     }
   };
   if (nameInput) nameInput.addEventListener("change", () => saveSelected(nameInput));
@@ -543,7 +543,7 @@ function bindMemoryWorlds() {
     if (field) field.disabled = false;
     if (r) {
       renderMemoryWorlds();
-      showToast("世界卡已保存");
+      showToast("已保存");
     }
   };
   if (nameInput) nameInput.addEventListener("change", () => saveSelected(nameInput));
@@ -863,7 +863,7 @@ function bindMemoryContext() {
       const r = await apiPost("/api/sessions/" + currentSessionId + "/context-config", { recent_n: recent_n });
       if (r && r.error) return showToast(r.error);
       if (window.vmSaveN) window.vmSaveN(r.recent_n);
-      showToast("上下文策略已保存");
+      showToast("已保存");
       await loadMemoryPanel();
     } catch (_) {
       showToast("保存失败");
@@ -919,7 +919,7 @@ function bindMemorySummary() {
         const r = await apiPost("/api/sessions/" + currentSessionId + "/summary-text", { text });
         if (r && r.error) return showToast(r.error);
         MEMORY_STATE = r.memory || MEMORY_STATE;
-        showToast("摘要已保存");
+        showToast("已保存");
         await loadMemoryPanel();
       } catch (_) {
         showToast("保存失败");
@@ -973,7 +973,7 @@ function bindMemoryVectorTopK() {
       if (r && r.error) return showToast(r.error);
       // 同步到内存态，保证后续请求/新建会话使用最新值
       if (window.vmSaveTopK) window.vmSaveTopK(body.top_k);
-      showToast("召回数量已保存");
+      showToast("已保存");
     } catch (_) {
       showToast("保存失败");
     }

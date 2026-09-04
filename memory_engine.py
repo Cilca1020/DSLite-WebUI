@@ -717,21 +717,29 @@ def extract_facts_for_session(api_key, username, sid, stored_msgs, full=False, a
         max_per_slice = None
 
     # 找出结束轮次超过进度点的切片（部分重叠的切片整片重抽，靠去重兜底）
+    # 增量（auto/手动单次）模式只处理【完整切片】：尾片攒满一片后才抽取，
+    # 避免每新增一轮就重抽一次尾片（导致每轮触发 LLM、事实无上限膨胀）。
+    # full=True（重新总结）仍处理全部历史含尾片。
+    full_end = total_rounds if full else (total_rounds // slice_n) * slice_n
+    if not full and full_end <= done_rounds:
+        return None  # 尾片未攒满一个完整切片，无事可做
     slices = _slice_chat(chat, slice_n)
     extracted = []  # [{"text","ts"}]
     now = time.time()
     rounds_done = 0
+    processed_end = done_rounds
     for sl in slices:
         sl_rounds = _count_rounds(sl)
         start, end = rounds_done, rounds_done + sl_rounds
         rounds_done = end
-        if end <= done_rounds:
+        if end <= done_rounds or end > full_end:
             continue
         result = extract_facts(api_key, [], sl, limit=max_per_slice)  # 纯抽取：不带旧事实
         for f in result or []:
             t = str(f.get("text", "")).strip()
             if t:
                 extracted.append({"text": t, "ts": now})
+        processed_end = end
 
     # 本地合并：full=True 只保留上锁条目做基底（整体替换）；增量则保留现有列表
     if full:
@@ -739,8 +747,15 @@ def extract_facts_for_session(api_key, username, sid, stored_msgs, full=False, a
     else:
         base = facts
     new_facts = _merge_facts_lists(base, extracted)
-    # 无论事实是否变化都推进进度，避免下次重复处理旧切片
-    storage.set_session_facts(username, sid, new_facts, last_round=total_rounds)
+    # 无论事实是否变化都推进进度，避免下次重复处理旧切片；
+    # 增量模式进度只推到最后一个完整切片的末尾（尾片未满不推进）。
+    if processed_end > done_rounds:
+        new_done = processed_end
+    elif full:
+        new_done = total_rounds
+    else:
+        new_done = done_rounds
+    storage.set_session_facts(username, sid, new_facts, last_round=new_done)
     if [f.get("text") for f in new_facts] != [f.get("text") for f in facts]:
         return new_facts
     return None

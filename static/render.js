@@ -111,6 +111,18 @@ function addMsgEl(role, text, markdown = true, msgIndex = null, files = null, an
   if (msgIndex !== null && currentSessionId) {
     bar = document.createElement("div");
     bar.className = "msg-actions";
+    // 编辑按钮：仅最新一轮的 user 消息显示（置于最左）
+    if (role === "user" && msgIndex === lastUserMsgIndex) {
+      const editBtn = document.createElement("button");
+      editBtn.className = "msg-action edit-btn";
+      editBtn.title = "编辑这条提问";
+      editBtn.innerHTML = svgIcon("edit");
+      editBtn.onclick = (e) => {
+        e.stopPropagation();
+        editMessage(msgIndex);
+      };
+      bar.appendChild(editBtn);
+    }
     // 复制纯文本按钮：复制气泡纯文本（排除思考过程折叠块与文件卡片）
     const copyBtn = document.createElement("button");
     copyBtn.className = "msg-action";
@@ -156,18 +168,6 @@ function addMsgEl(role, text, markdown = true, msgIndex = null, files = null, an
       };
       bar.appendChild(copyMdBtn);
     }
-    // 编辑按钮：仅最新一轮的 user 消息显示
-    if (role === "user" && msgIndex === lastUserMsgIndex) {
-      const editBtn = document.createElement("button");
-      editBtn.className = "msg-action edit-btn";
-      editBtn.title = "编辑这条提问";
-      editBtn.innerHTML = svgIcon("edit");
-      editBtn.onclick = (e) => {
-        e.stopPropagation();
-        editMessage(msgIndex);
-      };
-      bar.appendChild(editBtn);
-    }
     const delBtn = document.createElement("button");
     delBtn.className = "msg-action";
     delBtn.title = "删除这条消息（连同同轮另一条）";
@@ -176,7 +176,8 @@ function addMsgEl(role, text, markdown = true, msgIndex = null, files = null, an
       e.stopPropagation();
       deleteMessage(msgIndex);
     };
-    // 重试仅对最后一条助手消息有意义：重新请求其对应上文
+    bar.appendChild(delBtn);
+    // 重试仅对最后一条助手消息有意义：重新请求其对应上文（置于最右）
     if (role === "assistant" && msgIndex === lastAssistantMsgIndex) {
       const retryBtn = document.createElement("button");
       retryBtn.className = "msg-action retry-btn";
@@ -188,7 +189,6 @@ function addMsgEl(role, text, markdown = true, msgIndex = null, files = null, an
       };
       bar.appendChild(retryBtn);
     }
-    bar.appendChild(delBtn);
   }
   row.appendChild(div);
   if (msgIndex !== null && currentSessionId) row.appendChild(bar);
